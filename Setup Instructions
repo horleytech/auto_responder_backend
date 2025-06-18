@@ -1,0 +1,16 @@
+# 1. Clone the repo
+git clone https://github.com/your-username/auto-responder-backend.git
+cd auto-responder-backend
+
+# 2. Install dependencies
+npm install
+
+# 3. Create .env file and set your variables
+nano .env
+
+# 4. Start the server
+node index.js
+
+# (Optional) Use PM2 for production
+npm install -g pm2
+pm2 start index.js
