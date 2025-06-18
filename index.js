@@ -1,14 +1,14 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const { Configuration, OpenAIApi } = require('openai');
+const { OpenAI } = require('openai');
 require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.json());
 
-const openai = new OpenAIApi(new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_CHATGPT,
-}));
+});
 
 const TRIGGER = process.env.TRIGGER_KEYWORD?.toLowerCase() || 'available';
 const CUSTOM_RESPONSE = process.env.CUSTOM_RESPONSE || 'Available';
