@@ -23,20 +23,17 @@ app.post('/api/respond', async (req, res) => {
   if (!message) return res.status(400).send('Message is required');
 
   try {
-    const gpt = await openai.createChatCompletion({
-      model: 'gpt-4',
+    const gpt = await openai.chat.completions.create({
+      model: 'gpt-4o', // use gpt-4o for cheaper and fast performance
       messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT,
-        },
+        { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: message },
       ],
       max_tokens: 10,
       temperature: 0,
     });
 
-    const reply = gpt.data.choices[0]?.message?.content?.trim() || '';
+    const reply = gpt.choices[0]?.message?.content?.trim() || '';
     const normalized = normalize(reply);
 
     if (normalized === TRIGGER) {
@@ -45,7 +42,7 @@ app.post('/api/respond', async (req, res) => {
 
     return res.status(204).send(); // No content
   } catch (err) {
-    console.error(err);
+    console.error('OpenAI error:', err);
     res.status(500).send('Server error');
   }
 });
