@@ -19,8 +19,13 @@ function normalize(text) {
 }
 
 app.post('/api/respond', async (req, res) => {
+  console.log("🔽 Incoming request body:", req.body); // Debug log
+
   const userMessage = req.body?.senderMessage;
-  if (!userMessage) return res.status(400).send({ error: 'Missing senderMessage' });
+  if (!userMessage) {
+    console.warn("⚠️ Missing senderMessage in request.");
+    return res.status(400).send({ error: 'Missing senderMessage' });
+  }
 
   try {
     const gpt = await openai.chat.completions.create({
@@ -36,7 +41,11 @@ app.post('/api/respond', async (req, res) => {
     const reply = gpt.choices[0]?.message?.content?.trim() || '';
     const normalized = normalize(reply);
 
+    console.log("🧠 GPT raw reply:", reply);
+    console.log("🔍 Normalized reply:", normalized);
+
     if (normalized === TRIGGER) {
+      console.log("✅ Match found. Sending response...");
       return res.send({
         data: [
           { message: CUSTOM_RESPONSE }
@@ -44,14 +53,15 @@ app.post('/api/respond', async (req, res) => {
       });
     }
 
+    console.log("⛔ No match. No response sent.");
     return res.status(204).send(); // No reply
   } catch (err) {
-    console.error('OpenAI error:', err);
+    console.error('💥 OpenAI error:', err);
     return res.status(500).send({ error: 'Server error' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Auto Responder backend running on port ${PORT}`);
+  console.log(`🚀 Auto Responder backend running on port ${PORT}`);
 });
