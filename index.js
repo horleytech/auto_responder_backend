@@ -19,15 +19,15 @@ function normalize(text) {
 }
 
 app.post('/api/respond', async (req, res) => {
-  const { message } = req.body;
-  if (!message) return res.status(400).send('Message is required');
+  const userMessage = req.body?.senderMessage;
+  if (!userMessage) return res.status(400).send({ error: 'Missing senderMessage' });
 
   try {
     const gpt = await openai.chat.completions.create({
-      model: 'gpt-4o', // use gpt-4o for cheaper and fast performance
+      model: 'gpt-4o',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: message },
+        { role: 'user', content: userMessage },
       ],
       max_tokens: 10,
       temperature: 0,
@@ -37,13 +37,17 @@ app.post('/api/respond', async (req, res) => {
     const normalized = normalize(reply);
 
     if (normalized === TRIGGER) {
-      return res.send(CUSTOM_RESPONSE);
+      return res.send({
+        data: [
+          { message: CUSTOM_RESPONSE }
+        ]
+      });
     }
 
-    return res.status(204).send(); // No content
+    return res.status(204).send(); // No reply
   } catch (err) {
     console.error('OpenAI error:', err);
-    res.status(500).send('Server error');
+    return res.status(500).send({ error: 'Server error' });
   }
 });
 
