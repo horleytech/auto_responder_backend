@@ -179,3 +179,40 @@ git stash
 git pull origin main --rebase
 git stash pop
 ```
+
+
+### `git pull --rebase` fails with untracked `package-lock.json`
+
+If you see:
+
+```
+error: The following untracked working tree files would be overwritten by merge:
+        package-lock.json
+```
+
+It means your server has a local untracked `package-lock.json` but the remote now tracks that file.
+
+Use this safe flow:
+
+```bash
+cd ~/auto_responder_backend
+git stash -u
+git pull origin main --rebase
+git stash pop
+```
+
+If stash pop creates conflicts and you just want the repo version of lockfile:
+
+```bash
+cd ~/auto_responder_backend
+git checkout --theirs package-lock.json
+git add package-lock.json
+```
+
+If you do not need any local untracked files, you can also clean and pull:
+
+```bash
+cd ~/auto_responder_backend
+git clean -fd
+git pull origin main --rebase
+```
