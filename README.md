@@ -317,3 +317,23 @@ curl -s http://127.0.0.1:3000/api/providers
 ```
 
 If `providers` is empty or endpoint does not return JSON, fix deployment routing first.
+
+
+### Why dotenv prints `injecting env (6) from .env`
+
+That line is informational from `dotenv`, not an error. It means your process loaded 6 keys from one `.env` file.
+
+### `/api/*` returns 404 on Vercel
+
+If dashboard HTML loads but `/api/providers`, `/api/requests`, or `/api/analytics` return 404, your deployment is likely serving static files but not attaching Express routes.
+
+This repo now exports the Express app for Vercel runtime and only calls `app.listen` outside Vercel.
+After pulling latest code, redeploy in Vercel and test:
+
+```bash
+curl -i https://YOUR-DOMAIN/api/providers
+curl -i https://YOUR-DOMAIN/api/requests
+curl -i https://YOUR-DOMAIN/api/analytics
+```
+
+All should return JSON (200/500), not 404 HTML.

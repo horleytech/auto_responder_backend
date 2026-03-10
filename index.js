@@ -7,6 +7,8 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 const CHATGPT_API_KEY = process.env.OPENAI_CHATGPT || process.env.OPENAI_API_KEY || '';
 const TRIGGER = process.env.TRIGGER_KEYWORD?.toLowerCase() || 'available';
 const CUSTOM_RESPONSE = process.env.CUSTOM_RESPONSE || 'Available';
@@ -306,6 +308,11 @@ app.get('/healthz', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Auto Responder backend running on port ${PORT}`);
-});
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Auto Responder backend running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
