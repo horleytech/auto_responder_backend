@@ -216,3 +216,23 @@ cd ~/auto_responder_backend
 git clean -fd
 git pull origin main --rebase
 ```
+
+
+### Vercel env vars vs PM2 `.env`
+
+Vercel environment variables are only available inside Vercel deployments.
+If you run this app on your own Ubuntu server with PM2, set variables in that server's `.env` (or PM2 ecosystem config) and restart with `--update-env`.
+
+```bash
+cd ~/auto_responder_backend
+npm install
+pm2 restart auto-responder --update-env
+```
+
+If PM2 logs still show `Cannot find module 'firebase-admin'`, clear old logs and check fresh output:
+
+```bash
+pm2 flush auto-responder
+pm2 restart auto-responder --update-env
+pm2 logs auto-responder --lines 100
+```

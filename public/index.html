@@ -68,36 +68,51 @@
 
     async function loadProviders() {
       providerStatus.textContent = 'Loading providers...';
-      const response = await fetch('/api/providers');
-      const data = await response.json();
+      providerSelect.disabled = true;
+      try {
+        const response = await fetch('/api/providers');
+        const data = await response.json();
 
-      providerSelect.innerHTML = data.providers.map((provider) => {
-        const configuredNote = provider.configured ? '' : ' (missing key)';
-        const selected = provider.name === data.activeProvider ? 'selected' : '';
-        return `<option value="${provider.name}" ${selected}>${provider.name} · ${provider.model}${configuredNote}</option>`;
-      }).join('');
+        if (!response.ok || !Array.isArray(data.providers)) {
+          throw new Error(data.error || 'Failed to load providers.');
+        }
 
-      persistenceMode.textContent = `Storage: ${data.persistence}`;
-      providerStatus.textContent = `Current: ${data.activeProvider}`;
+        providerSelect.innerHTML = data.providers.map((provider) => {
+          const configuredNote = provider.configured ? '' : ' (missing key)';
+          const selected = provider.name === data.activeProvider ? 'selected' : '';
+          return `<option value="${provider.name}" ${selected}>${provider.name} · ${provider.model}${configuredNote}</option>`;
+        }).join('');
+
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        providerStatus.textContent = `Current: ${data.activeProvider}`;
+      } catch (err) {
+        providerStatus.textContent = `Provider load failed: ${err.message}`;
+      } finally {
+        providerSelect.disabled = false;
+      }
     }
 
     async function saveProvider() {
       providerStatus.textContent = 'Saving...';
-      const response = await fetch('/api/providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerSelect.value }),
-      });
+      try {
+        const response = await fetch('/api/providers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: providerSelect.value }),
+        });
 
-      const data = await response.json();
-      if (!response.ok) {
-        providerStatus.textContent = data.error || 'Failed to update provider.';
-        return;
+        const data = await response.json();
+        if (!response.ok) {
+          providerStatus.textContent = data.error || 'Failed to update provider.';
+          return;
+        }
+
+        providerStatus.textContent = `Saved: ${data.activeProvider}`;
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        await loadProviders();
+      } catch (err) {
+        providerStatus.textContent = `Failed to save provider: ${err.message}`;
       }
-
-      providerStatus.textContent = `Saved: ${data.activeProvider}`;
-      persistenceMode.textContent = `Storage: ${data.persistence}`;
-      await loadProviders();
     }
 
     function renderRequests(requests) {
@@ -117,10 +132,17 @@
     }
 
     async function loadRequests() {
-      const response = await fetch('/api/requests');
-      const data = await response.json();
-      persistenceMode.textContent = `Storage: ${data.persistence}`;
-      renderRequests(data.requests || []);
+      try {
+        const response = await fetch('/api/requests');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to load requests.');
+        }
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        renderRequests(data.requests || []);
+      } catch (err) {
+        providerStatus.textContent = `Requests load failed: ${err.message}`;
+      }
     }
 
     document.getElementById('saveProvider').addEventListener('click', saveProvider);

@@ -163,19 +163,27 @@ async function runProviderCompletion(provider, userMessage) {
 }
 
 app.get('/api/providers', async (req, res) => {
-  const currentProvider = await getActiveProvider();
-  return res.send(listProviders(currentProvider));
+  try {
+    const currentProvider = await getActiveProvider();
+    return res.send(listProviders(currentProvider));
+  } catch (err) {
+    return res.status(500).send({ error: 'Failed to load providers', details: err.message });
+  }
 });
 
 app.post('/api/providers', async (req, res) => {
-  const requestedProvider = String(req.body?.provider || '').toLowerCase().trim();
+  try {
+    const requestedProvider = String(req.body?.provider || '').toLowerCase().trim();
 
-  if (!clients[requestedProvider]) {
-    return res.status(400).send({ error: 'Unsupported provider. Use "chatgpt" or "qwen".' });
+    if (!clients[requestedProvider]) {
+      return res.status(400).send({ error: 'Unsupported provider. Use "chatgpt" or "qwen".' });
+    }
+
+    await setActiveProvider(requestedProvider);
+    return res.send(listProviders(requestedProvider));
+  } catch (err) {
+    return res.status(500).send({ error: 'Failed to save provider', details: err.message });
   }
-
-  await setActiveProvider(requestedProvider);
-  return res.send(listProviders(requestedProvider));
 });
 
 app.get('/api/requests', async (req, res) => {
