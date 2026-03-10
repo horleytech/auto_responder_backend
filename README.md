@@ -337,3 +337,11 @@ curl -i https://YOUR-DOMAIN/api/analytics
 ```
 
 All should return JSON (200/500), not 404 HTML.
+
+### Vercel warning about `builds` overriding Project Settings
+
+If you see:
+
+`WARN! Due to `builds` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply.`
+
+That was from legacy Vercel config style. This repo now uses modern `functions` + `rewrites` in `vercel.json`, which removes that warning and keeps routing stable for Express APIs.
