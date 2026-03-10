@@ -128,4 +128,9 @@ Open `/` to:
 
 This means the Vercel project is pointing to the wrong folder. Change Root Directory to `.` and redeploy.
 
+### Fix for this error
+`sh: line 1: vite: command not found` / `Command "vite build" exited with 127`
+
+This project is an Express backend, not a Vite app. The repo now includes `vercel.json` to force a Node deployment from `index.js`. Also set **Framework Preset = Other** and clear any custom Build Command like `vite build` in Vercel project settings, then redeploy.
+
 If your Android app or market webhook is already pointed to a Vercel URL, update it to this deployment URL and use `/api/respond`.
