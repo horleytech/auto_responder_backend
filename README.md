@@ -13,7 +13,8 @@ This project is a Node.js service for market-message auto responses. It supports
 - Dashboard UI at `/` for:
   - Viewing incoming requests in an organized table
   - Switching default provider between ChatGPT and Qwen
-  - Home button back to HorleyTech hub
+  - Home button back to HorleyTech hub (same tab)
+  - Built-in Dashboard Diagnostics checks for providers/requests endpoints
   - Viewing top requested items and request frequency
 - Persistence modes:
   - Firebase Firestore (recommended for Vercel/serverless)
@@ -303,3 +304,16 @@ curl -i https://YOUR-DOMAIN/api/requests
 ```
 
 Both should return JSON. If they return HTML/text, your domain is pointing to a different app or the server route is not deployed yet.
+
+
+### If provider switching still fails
+
+Use the **Run Checks** button in the dashboard. It validates `/api/providers` and `/api/requests` and shows whether provider keys are configured or missing.
+
+Also verify manually:
+
+```bash
+curl -s http://127.0.0.1:3000/api/providers
+```
+
+If `providers` is empty or endpoint does not return JSON, fix deployment routing first.

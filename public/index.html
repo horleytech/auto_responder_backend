@@ -10,6 +10,7 @@
     .card { background: #151c33; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
     .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     select, button { border-radius: 6px; padding: 8px 10px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; }
+    select { min-width: 260px; }
     button { cursor: pointer; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border-bottom: 1px solid #2c385f; padding: 10px; text-align: left; font-size: 13px; vertical-align: top; }
@@ -28,7 +29,7 @@
 <body>
   <div class="row" style="justify-content:space-between; margin-bottom: 12px;">
     <h1 style="margin:0;">Market Request Dashboard</h1>
-    <a class="home-link" href="https://scrapebot.horleytech.com/hub" target="_blank" rel="noopener noreferrer">Home</a>
+    <a class="home-link" href="https://scrapebot.horleytech.com/hub">Home</a>
   </div>
 
   <div class="card row">
@@ -37,6 +38,7 @@
     <button id="saveProvider">Save Provider</button>
     <span id="providerStatus"></span>
     <span class="hint" id="persistenceMode"></span>
+    <button id="runChecks" type="button">Run Checks</button>
   </div>
 
   <div class="card">
@@ -59,6 +61,15 @@
         <tbody id="requestTableBody"></tbody>
       </table>
     </div>
+  </div>
+
+
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Dashboard Diagnostics</strong>
+    </div>
+    <div id="diagBox" class="hint">No checks run yet.</div>
   </div>
 
   <div class="card">
@@ -86,6 +97,7 @@
     const requestTableBody = document.getElementById('requestTableBody');
     const persistenceMode = document.getElementById('persistenceMode');
     const topRequestTableBody = document.getElementById('topRequestTableBody');
+    const diagBox = document.getElementById('diagBox');
 
     function esc(text) {
       return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -114,9 +126,10 @@
         }
 
         providerSelect.innerHTML = data.providers.map((provider) => {
+          const configuredMark = provider.configured ? '✅' : '⚠️';
           const configuredNote = provider.configured ? '' : ' (missing key)';
           const selected = provider.name === data.activeProvider ? 'selected' : '';
-          return `<option value="${provider.name}" ${selected}>${provider.name} · ${provider.model}${configuredNote}</option>`;
+          return `<option value="${provider.name}" ${selected}>${configuredMark} ${provider.name} · ${provider.model}${configuredNote}</option>`;
         }).join('');
 
         persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
@@ -191,6 +204,36 @@
       }
     }
 
+
+
+    async function runChecks() {
+      const lines = [];
+      try {
+        const { response, data } = await fetchJsonSafe('/api/providers');
+        lines.push(`Providers endpoint: ${response.status}`);
+        if (Array.isArray(data.providers)) {
+          lines.push(`Providers loaded: ${data.providers.length}`);
+          lines.push(`Active provider: ${data.activeProvider || 'unknown'}`);
+          const configured = data.providers.map((p) => `${p.name}:${p.configured ? 'configured' : 'missing_key'}`).join(', ');
+          lines.push(`Provider keys: ${configured}`);
+        } else {
+          lines.push('Providers payload invalid (no providers array).');
+        }
+      } catch (err) {
+        lines.push(`Providers check failed: ${err.message}`);
+      }
+
+      try {
+        const { response, data } = await fetchJsonSafe('/api/requests');
+        lines.push(`Requests endpoint: ${response.status}`);
+        lines.push(`Request count: ${data.count ?? 'unknown'}`);
+      } catch (err) {
+        lines.push(`Requests check failed: ${err.message}`);
+      }
+
+      diagBox.innerHTML = lines.map((line) => `<div>${esc(line)}</div>`).join('');
+    }
+
     async function loadRequests() {
       try {
         const { response, data } = await fetchJsonSafe('/api/requests');
@@ -205,6 +248,7 @@
     }
 
     document.getElementById('saveProvider').addEventListener('click', saveProvider);
+    document.getElementById('runChecks').addEventListener('click', runChecks);
     document.getElementById('refresh').addEventListener('click', async () => {
       await loadRequests();
       await loadAnalytics();
@@ -213,6 +257,7 @@
     loadProviders();
     loadRequests();
     loadAnalytics();
+    runChecks();
     setInterval(async () => {
       await loadRequests();
       await loadAnalytics();
