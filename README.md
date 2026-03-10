@@ -13,13 +13,21 @@ This project is a Node.js service for market-message auto responses. It supports
 - Dashboard UI at `/` for:
   - Viewing incoming requests in an organized table
   - Switching default provider between ChatGPT and Qwen
+  - Home button back to HorleyTech hub
+  - Viewing top requested items and request frequency
 - Persistence modes:
   - Firebase Firestore (recommended for Vercel/serverless)
   - In-memory fallback (if Firebase is not configured)
 
 ## Environment Variables
 
-Create a `.env` file in the project root.
+> Never commit your real `.env` to git. Rotate keys immediately if they were ever committed.
+
+Copy `.env.example` to `.env` in the project root and fill your real values.
+
+```bash
+cp .env.example .env
+```
 
 ### Required
 
@@ -42,12 +50,13 @@ CHATGPT_MODEL=gpt-4o
 QWEN_MODEL=qwen-plus
 QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 
-# Auto-response behavior (optional)
+# Auto-response behavior
 CUSTOM_RESPONSE=Available
 TRIGGER_KEYWORD=available
-PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "available". If not, say nothing.
+# PROMPT_TEMPLATE is optional. Only set it if you want to override default prompt logic.
+# PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "available". If not, say nothing.
 
-# Request history cap (optional)
+# Request history cap
 MAX_REQUEST_LOG=250
 ```
 
@@ -106,6 +115,10 @@ Updates active provider.
 }
 ```
 
+### `GET /api/analytics`
+
+Returns aggregated request-frequency data (top repeated request texts) for dashboard insights.
+
 ### `GET /healthz`
 
 Returns service health and current persistence mode (`firebase` or `memory`).
@@ -115,6 +128,8 @@ Returns service health and current persistence mode (`firebase` or `memory`).
 Use your deployed Vercel URL root as the dashboard link:
 
 `https://YOUR-VERCEL-DOMAIN/`
+
+Dashboard includes a Home button that links to: `https://scrapebot.horleytech.com/hub`
 
 Use this API webhook URL in Horley Tech Scrapebot for incoming requests:
 
@@ -236,3 +251,55 @@ pm2 flush auto-responder
 pm2 restart auto-responder --update-env
 pm2 logs auto-responder --lines 100
 ```
+
+
+
+### Why did a prompt appear in `.env`?
+
+The app does **not** edit your `.env` file at runtime. If you see `PROMPT_TEMPLATE` in `.env`, it was manually added during setup or deployment edits. It is optional and can be removed to use built-in defaults.
+
+### Quick `.env` checklist for PM2 server
+
+Use this minimum set on your Ubuntu/PM2 host (not only in Vercel):
+
+```env
+OPENAI_CHATGPT=...
+QWEN_API_KEY=...
+CUSTOM_RESPONSE=Available
+TRIGGER_KEYWORD=available
+PORT=3000
+```
+
+Optional for Firebase persistence:
+
+```env
+FIREBASE_PROJECT_ID=...
+FIREBASE_SERVICE_ACCOUNT_JSON={...single-line-json...}
+```
+
+### How to confirm Firebase is working
+
+1. Open dashboard and check storage label shows `Storage: firebase`.
+2. Or call:
+
+```bash
+curl -s http://127.0.0.1:3000/api/providers
+curl -s http://127.0.0.1:3000/api/requests
+```
+
+If response shows `"persistence":"firebase"`, Firebase is active. If `"memory"`, it fell back to in-memory mode.
+
+
+
+### `Unexpected token 'T' ... is not valid JSON` in dashboard
+
+This means the dashboard asked `/api/providers` or `/api/requests` for JSON but received plain text/HTML instead (often a 404/error page like `The page could not be found`).
+
+Check these quickly:
+
+```bash
+curl -i https://YOUR-DOMAIN/api/providers
+curl -i https://YOUR-DOMAIN/api/requests
+```
+
+Both should return JSON. If they return HTML/text, your domain is pointing to a different app or the server route is not deployed yet.
