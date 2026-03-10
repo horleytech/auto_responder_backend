@@ -1,12 +1,17 @@
-# Auto Responder Backend (ChatGPT + Qwen) + Dashboard
+# Auto Responder Backend (Organized) + Dashboard
 
-This version keeps only the essentials:
-- Your CSV-based catalog matching logic
-- Provider switching between ChatGPT and Qwen
-- Request logging and grouped request frequency
-- Dashboard controls for provider + CSV URL updates
+This build keeps your core CSV-driven logic and adds a clean folder structure, Qwen support, Firebase persistence, and a dashboard that controls provider + CSV source.
 
-## 1) Setup
+## Folder Structure
+
+- `src/config/` → environment config
+- `src/services/` → Firebase, providers, catalog, request store, settings store
+- `src/app.js` → API wiring
+- `index.js` → runtime entrypoint (`app.listen`) + export for Vercel
+- `public/css/` and `public/js/` → organized frontend assets
+- `public/index.html` → dashboard shell
+
+## Setup
 
 ```bash
 cp .env.example .env
@@ -16,7 +21,7 @@ npm start
 
 Dashboard: `http://localhost:3000/`
 
-## 2) Environment Variables
+## Environment Variables
 
 Required:
 
@@ -26,7 +31,7 @@ OPENAI_CHATGPT=your-openai-key
 QWEN_API_KEY=your-qwen-key
 ```
 
-Optional:
+Optional runtime:
 
 ```env
 PORT=3000
@@ -39,35 +44,32 @@ CUSTOM_RESPONSE=Available
 GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
 ```
 
-## 3) API
+Optional Firebase persistence:
 
-- `POST /api/respond` (requires header `x-api-key`)
+```env
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+```
+
+If Firebase is set, request records and settings (active provider + CSV URL) persist in Firestore. If not, memory fallback is used.
+
+## API
+
+- `POST /api/respond` (requires `x-api-key`)
 - `GET /api/providers`
 - `POST /api/providers` (requires `x-api-key`)
 - `GET /api/catalog-source`
-- `POST /api/catalog-source` (requires `x-api-key`, saves new CSV URL and reloads)
+- `POST /api/catalog-source` (requires `x-api-key`)
 - `POST /api/reload-catalog` (requires `x-api-key`)
 - `GET /api/requests`
 - `GET /api/grouped-requests`
 - `GET /healthz`
 
-## 4) Dashboard behavior
+## Dashboard
 
-The dashboard now includes:
-- Provider switcher (ChatGPT/Qwen)
-- API key input used for secure save/reload actions
-- CSV URL input (patch your catalog source from UI)
-- Full request log table
-- Grouped request frequency table
-
-## 5) Deploy notes (Vercel)
-
-- Keep Root Directory as `.`
-- Redeploy after each merge
-- If `/api/*` returns 404, redeploy latest commit and test:
-
-```bash
-curl -i https://YOUR-DOMAIN/api/providers
-curl -i https://YOUR-DOMAIN/api/requests
-curl -i https://YOUR-DOMAIN/api/grouped-requests
-```
+- Switch provider between ChatGPT and Qwen
+- Enter and update CSV URL from UI
+- Reload catalog from UI
+- View all incoming requests
+- View grouped/frequency requests
+- Same-tab Home button to `https://scrapebot.horleytech.com/hub`
