@@ -17,7 +17,16 @@ This project is a Node.js service for market-message auto responses. It now supp
 
 ## Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root.
+
+### Required
+
+```env
+OPENAI_CHATGPT=your-openai-api-key
+QWEN_API_KEY=your-qwen-api-key
+```
+
+### Optional (safe defaults are already in code)
 
 ```env
 # Server
@@ -29,18 +38,16 @@ CHATGPT_MODEL=gpt-4o
 QWEN_MODEL=qwen-plus
 QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 
-# API keys
-OPENAI_CHATGPT=your-openai-api-key
-QWEN_API_KEY=your-qwen-api-key
-
-# Auto-response behavior
+# Auto-response behavior (optional)
 CUSTOM_RESPONSE=Available
 TRIGGER_KEYWORD=available
 PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "available". If not, say nothing.
 
-# Request history cap
+# Request history cap (optional)
 MAX_REQUEST_LOG=250
 ```
+
+If you do not set `TRIGGER_KEYWORD`, `CUSTOM_RESPONSE`, `PROMPT_TEMPLATE`, or `MAX_REQUEST_LOG`, the app uses built-in defaults from `index.js`.
 
 ## Run Locally
 
@@ -110,7 +117,15 @@ Open `/` to:
 
 1. Push this repo to GitHub.
 2. Import the project into Vercel (same workflow as Horley Tech Scrapebot).
-3. Set all required environment variables in Vercel Project Settings.
-4. Deploy.
+3. In **Project Settings → General**, set:
+   - **Root Directory** = `.` (project root)
+   - Do **not** set it to `frontend` for this repo.
+4. Set environment variables in **Project Settings → Environment Variables** (only API keys are strictly required).
+5. Deploy.
+
+### Fix for this error
+`Build Failed: The specified Root Directory "frontend" does not exist.`
+
+This means the Vercel project is pointing to the wrong folder. Change Root Directory to `.` and redeploy.
 
 If your Android app or market webhook is already pointed to a Vercel URL, update it to this deployment URL and use `/api/respond`.
