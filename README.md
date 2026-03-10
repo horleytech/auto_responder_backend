@@ -85,12 +85,3 @@ Your original responder logic is preserved:
 - same `204` behavior for forbidden/no-match.
 
 Improvements only add organization, dashboard controls, provider switching (ChatGPT/Qwen), and optional Firebase persistence for records/settings.
-
-
-## Vercel Runtime Error Fix
-
-If Vercel shows:
-
-`Function Runtimes must have a valid version, for example now-php@1.0.0.`
-
-Use the pinned runtime in `vercel.json` (`@vercel/node@3.2.26`) and redeploy.
