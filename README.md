@@ -1,36 +1,96 @@
-# Auto Responder Backend
+# Auto Responder Backend (Organized) + Dashboard
 
-This is a lightweight Node.js backend for an Android Auto Responder app. It uses OpenAI's ChatGPT to decide whether to respond to incoming messages based on specific keywords and prompts.
+This build keeps your core CSV-driven logic and adds a clean folder structure, Qwen support, Firebase persistence, and a dashboard that controls provider + CSV source.
 
----
+## Folder Structure
 
-## 🚀 Features
+- `src/config/` → environment config
+- `src/services/` → Firebase, providers, catalog, request store, settings store
+- `src/app.js` → API wiring
+- `index.js` → runtime entrypoint (`app.listen`) + export for Vercel
+- `public/css/` and `public/js/` → organized frontend assets
+- `public/index.html` → dashboard shell
 
-- Connects to OpenAI's ChatGPT API
-- Uses a custom prompt to filter valid responses
-- Only replies with `"Available"` (or a custom response) if the AI detects availability
-- Returns no response for irrelevant or invalid messages
-- Configurable via `.env` file
-- Optimized for real-time use
+## Setup
 
----
+```bash
+cp .env.example .env
+npm install
+npm start
+```
 
-## 🧠 How It Works
+Dashboard: `http://localhost:3000/`
 
-1. The Android app sends a message (e.g. "Do you have iPhone 13?") to the backend.
-2. The backend forwards this to ChatGPT using a system prompt.
-3. If ChatGPT responds with `"available"` (or variation), it sends back a custom reply.
-4. Otherwise, it returns nothing (`204 No Content`).
+## Environment Variables
 
----
-
-## 🔧 .env Configuration
-
-Create a `.env` file in the root directory and add the following:
+Required:
 
 ```env
-OPENAI_CHATGPT=your-chatgpt-api-key
-CUSTOM_RESPONSE=Available
-TRIGGER_KEYWORD=available
+API_KEY=your-secret-incoming-key
+OPENAI_CHATGPT=your-openai-key
+QWEN_API_KEY=your-qwen-key
+```
+
+Optional runtime:
+
+```env
 PORT=3000
-PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "available". If not, say nothing.
+DEFAULT_AI_PROVIDER=chatgpt
+CHATGPT_MODEL=gpt-4o-mini
+QWEN_MODEL=qwen-plus
+QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+MAX_REQUEST_LOG=300
+CUSTOM_RESPONSE=Available
+GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
+```
+
+Optional Firebase persistence:
+
+```env
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+```
+
+If Firebase is set, request records and settings (active provider + CSV URL) persist in Firestore. If not, memory fallback is used.
+
+## API
+
+- `POST /api/respond` (requires `x-api-key`)
+- `GET /api/providers`
+- `POST /api/providers` (requires `x-api-key`)
+- `GET /api/catalog-source`
+- `POST /api/catalog-source` (requires `x-api-key`)
+- `POST /api/reload-catalog` (requires `x-api-key`)
+- `GET /api/requests`
+- `GET /api/grouped-requests`
+- `GET /healthz`
+
+## Dashboard
+
+- Switch provider between ChatGPT and Qwen
+- Enter and update CSV URL from UI
+- Reload catalog from UI
+- View all incoming requests
+- View grouped/frequency requests
+- Same-tab Home button to `https://scrapebot.horleytech.com/hub`
+
+
+## Core Logic Guarantee
+
+Your original responder logic is preserved:
+- same forbidden phrase lists,
+- same category detection flow from AI JSON,
+- same judgment order (forbidden first, then supported device),
+- same dynamic response rotation,
+- same `204` behavior for forbidden/no-match.
+
+Improvements only add organization, dashboard controls, provider switching (ChatGPT/Qwen), and optional Firebase persistence for records/settings.
+
+
+## Vercel Runtime Error Fix
+
+If Vercel shows:
+
+`Function Runtimes must have a valid version, for example now-php@1.0.0.`
+
+Use the pinned runtime in `vercel.json` (`@vercel/node@3.2.26`) and redeploy.
