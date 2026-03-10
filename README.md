@@ -1,6 +1,6 @@
 # Auto Responder Backend + Dashboard
 
-This project is a Node.js service for market-message auto responses. It now supports **ChatGPT and Qwen**, plus a built-in frontend dashboard to monitor inbound requests and switch the default AI provider.
+This project is a Node.js service for market-message auto responses. It supports **ChatGPT and Qwen**, includes a built-in frontend dashboard, and can persist provider settings + request logs to **Firebase Firestore**.
 
 ## Features
 
@@ -9,11 +9,13 @@ This project is a Node.js service for market-message auto responses. It now supp
   - Qwen (OpenAI-compatible API)
 - `/api/respond` endpoint that checks messages against your prompt logic
 - Configurable trigger keyword and custom response
-- In-memory request tracking for all incoming requests
+- Request tracking for incoming messages
 - Dashboard UI at `/` for:
   - Viewing incoming requests in an organized table
   - Switching default provider between ChatGPT and Qwen
-- Ready to deploy to Vercel (including your Horley Tech Scrapebot Vercel setup)
+- Persistence modes:
+  - Firebase Firestore (recommended for Vercel/serverless)
+  - In-memory fallback (if Firebase is not configured)
 
 ## Environment Variables
 
@@ -47,7 +49,15 @@ PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "ava
 MAX_REQUEST_LOG=250
 ```
 
-If you do not set `TRIGGER_KEYWORD`, `CUSTOM_RESPONSE`, `PROMPT_TEMPLATE`, or `MAX_REQUEST_LOG`, the app uses built-in defaults from `index.js`.
+### Firebase Firestore (recommended on Vercel)
+
+```env
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+```
+
+- `FIREBASE_SERVICE_ACCOUNT_JSON` must contain a full service account JSON object as a single-line string.
+- If Firebase is not configured, the app still works using memory storage.
 
 ## Run Locally
 
@@ -74,31 +84,19 @@ Request body:
 }
 ```
 
-- `provider` is optional. If omitted, the backend uses the active default provider.
-
-Possible responses:
-
-- `200` with reply payload when trigger matches
-- `204` when no match
-- `400` for invalid input
-- `500` for provider/API issues
+- `provider` is optional. If omitted, backend uses the saved active provider.
 
 ### `GET /api/requests`
 
-Returns recent inbound requests and their processing status:
-- `matched`
-- `no_match`
-- `failed`
+Returns recent inbound requests and status (`matched`, `no_match`, `failed`).
 
 ### `GET /api/providers`
 
-Lists provider configuration and current active provider.
+Lists providers and current active provider.
 
 ### `POST /api/providers`
 
 Updates active provider.
-
-Request body:
 
 ```json
 {
@@ -106,31 +104,37 @@ Request body:
 }
 ```
 
-## Frontend Dashboard
+### `GET /healthz`
 
-Open `/` to:
-1. Select default AI provider (ChatGPT or Qwen)
-2. View all incoming requests
-3. Inspect status, source message, provider, and errors
+Returns service health and current persistence mode (`firebase` or `memory`).
+
+## Dashboard Link for Horley Tech Scrapebot
+
+Use your deployed Vercel URL root as the dashboard link:
+
+`https://YOUR-VERCEL-DOMAIN/`
+
+Use this API webhook URL in Horley Tech Scrapebot for incoming requests:
+
+`https://YOUR-VERCEL-DOMAIN/api/respond`
 
 ## Deploying to Vercel
 
 1. Push this repo to GitHub.
-2. Import the project into Vercel (same workflow as Horley Tech Scrapebot).
-3. In **Project Settings → General**, set:
-   - **Root Directory** = `.` (project root)
-   - Do **not** set it to `frontend` for this repo.
-4. Set environment variables in **Project Settings → Environment Variables** (only API keys are strictly required).
+2. Import into Vercel.
+3. In **Project Settings → General**:
+   - **Root Directory** = `.`
+   - **Framework Preset** = `Other`
+   - Remove any custom build command like `vite build`
+4. Set environment variables in Vercel.
 5. Deploy.
 
 ### Fix for this error
 `Build Failed: The specified Root Directory "frontend" does not exist.`
 
-This means the Vercel project is pointing to the wrong folder. Change Root Directory to `.` and redeploy.
+Set Root Directory to `.` and redeploy.
 
 ### Fix for this error
 `sh: line 1: vite: command not found` / `Command "vite build" exited with 127`
 
-This project is an Express backend, not a Vite app. The repo now includes `vercel.json` to force a Node deployment from `index.js`. Also set **Framework Preset = Other** and clear any custom Build Command like `vite build` in Vercel project settings, then redeploy.
-
-If your Android app or market webhook is already pointed to a Vercel URL, update it to this deployment URL and use `/api/respond`.
+This is a backend project (Express), not Vite. Set framework to `Other`, remove `vite build`, and redeploy.

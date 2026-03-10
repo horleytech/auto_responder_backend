@@ -20,6 +20,7 @@
     .no_match { background: #4a4f66; }
     .failed { background: #6a1d1d; }
     .received { background: #204f6a; }
+    .hint { opacity: 0.8; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -30,6 +31,7 @@
     <select id="provider"></select>
     <button id="saveProvider">Save Provider</button>
     <span id="providerStatus"></span>
+    <span class="hint" id="persistenceMode"></span>
   </div>
 
   <div class="card">
@@ -58,12 +60,14 @@
     const providerSelect = document.getElementById('provider');
     const providerStatus = document.getElementById('providerStatus');
     const requestTableBody = document.getElementById('requestTableBody');
+    const persistenceMode = document.getElementById('persistenceMode');
 
     function esc(text) {
       return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     async function loadProviders() {
+      providerStatus.textContent = 'Loading providers...';
       const response = await fetch('/api/providers');
       const data = await response.json();
 
@@ -72,6 +76,9 @@
         const selected = provider.name === data.activeProvider ? 'selected' : '';
         return `<option value="${provider.name}" ${selected}>${provider.name} · ${provider.model}${configuredNote}</option>`;
       }).join('');
+
+      persistenceMode.textContent = `Storage: ${data.persistence}`;
+      providerStatus.textContent = `Current: ${data.activeProvider}`;
     }
 
     async function saveProvider() {
@@ -82,13 +89,14 @@
         body: JSON.stringify({ provider: providerSelect.value }),
       });
 
+      const data = await response.json();
       if (!response.ok) {
-        const data = await response.json();
         providerStatus.textContent = data.error || 'Failed to update provider.';
         return;
       }
 
-      providerStatus.textContent = `Saved: ${providerSelect.value}`;
+      providerStatus.textContent = `Saved: ${data.activeProvider}`;
+      persistenceMode.textContent = `Storage: ${data.persistence}`;
       await loadProviders();
     }
 
@@ -111,6 +119,7 @@
     async function loadRequests() {
       const response = await fetch('/api/requests');
       const data = await response.json();
+      persistenceMode.textContent = `Storage: ${data.persistence}`;
       renderRequests(data.requests || []);
     }
 
