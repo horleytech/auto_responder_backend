@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto Responder Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0b1020; color: #f3f5ff; margin: 0; padding: 24px; }
+    h1 { margin: 0; }
+    .card { background: #151c33; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input, select, button { border-radius: 6px; padding: 8px 10px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; }
+    input { min-width: 280px; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #2c385f; padding: 10px; text-align: left; font-size: 13px; vertical-align: top; }
+    th { background: #151c33; }
+    .table-wrap { max-height: 40vh; overflow: auto; }
+    .hint { opacity: 0.85; font-size: 13px; }
+    .home-link { border-radius: 6px; padding: 8px 12px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+    <h1>Market Request Dashboard</h1>
+    <a class="home-link" href="https://scrapebot.horleytech.com/hub">Home</a>
+  </div>
+
+  <div class="card row">
+    <label>Admin API Key:</label>
+    <input id="apiKey" type="password" placeholder="x-api-key for save/reload actions" />
+  </div>
+
+  <div class="card row">
+    <label for="provider">Active Provider:</label>
+    <select id="provider"></select>
+    <button id="saveProvider">Save Provider</button>
+    <span id="providerStatus" class="hint"></span>
+  </div>
+
+  <div class="card row">
+    <label for="csvUrl">CSV URL:</label>
+    <input id="csvUrl" type="text" placeholder="https://.../export?format=csv" />
+    <button id="saveCsv">Save + Reload Catalog</button>
+    <button id="reloadCatalog">Reload Catalog</button>
+    <span id="catalogStatus" class="hint"></span>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Grouped Requests (Most Frequent)</strong>
+      <button id="refreshGrouped">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Request</th><th>Count</th><th>Last Seen</th></tr>
+        </thead>
+        <tbody id="groupedBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>All Incoming Requests</strong>
+      <button id="refreshRequests">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Provider</th><th>Status</th><th>Sender Message</th><th>Matched Device</th><th>Error</th></tr>
+        </thead>
+        <tbody id="requestBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const providerSelect = document.getElementById('provider');
+    const providerStatus = document.getElementById('providerStatus');
+    const catalogStatus = document.getElementById('catalogStatus');
+    const requestBody = document.getElementById('requestBody');
+    const groupedBody = document.getElementById('groupedBody');
+    const csvUrlInput = document.getElementById('csvUrl');
+    const apiKeyInput = document.getElementById('apiKey');
+
+    function esc(text) {
+      return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function authHeaders() {
+      const key = apiKeyInput.value.trim();
+      return key ? { 'Content-Type': 'application/json', 'x-api-key': key } : { 'Content-Type': 'application/json' };
+    }
+
+    async function fetchJsonSafe(url, options) {
+      const response = await fetch(url, options);
+      const raw = await response.text();
+      let data = {};
+      if (raw) {
+        try { data = JSON.parse(raw); } catch { data = { raw }; }
+      }
+      return { response, data };
+    }
+
+    async function loadProviders() {
+      providerStatus.textContent = 'Loading providers...';
+      const { response, data } = await fetchJsonSafe('/api/providers');
+      if (!response.ok) {
+        providerStatus.textContent = `Failed to load providers (${response.status})`;
+        return;
+      }
+      providerSelect.innerHTML = (data.providers || []).map((p) => {
+        const mark = p.configured ? '✅' : '⚠️';
+        const selected = p.name === data.activeProvider ? 'selected' : '';
+        return `<option value="${p.name}" ${selected}>${mark} ${p.name} · ${p.model}</option>`;
+      }).join('');
+      providerStatus.textContent = `Current: ${data.activeProvider}`;
+    }
+
+    async function saveProvider() {
+      providerStatus.textContent = 'Saving provider...';
+      const { response, data } = await fetchJsonSafe('/api/providers', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ provider: providerSelect.value }),
+      });
+      if (!response.ok) {
+        providerStatus.textContent = `Save failed (${response.status}): ${data.error || data.raw || 'Unknown error'}`;
+        return;
+      }
+      providerStatus.textContent = `Saved: ${data.activeProvider}`;
+      await loadProviders();
+    }
+
+    async function loadCatalogSource() {
+      const { response, data } = await fetchJsonSafe('/api/catalog-source');
+      if (!response.ok) {
+        catalogStatus.textContent = `Catalog load failed (${response.status})`;
+        return;
+      }
+      csvUrlInput.value = data.csvUrl || '';
+      catalogStatus.textContent = `Catalog: ${data.newCount || 0} new, ${data.usedCount || 0} used`;
+    }
+
+    async function saveCatalogSource() {
+      catalogStatus.textContent = 'Saving CSV URL + reloading...';
+      const { response, data } = await fetchJsonSafe('/api/catalog-source', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ csvUrl: csvUrlInput.value.trim() }),
+      });
+      if (!response.ok) {
+        catalogStatus.textContent = `Save failed (${response.status}): ${data.error || data.raw || 'Unknown error'}`;
+        return;
+      }
+      catalogStatus.textContent = `Reloaded: ${data.newCount || 0} new, ${data.usedCount || 0} used`;
+    }
+
+    async function reloadCatalog() {
+      catalogStatus.textContent = 'Reloading catalog...';
+      const { response, data } = await fetchJsonSafe('/api/reload-catalog', {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (!response.ok) {
+        catalogStatus.textContent = `Reload failed (${response.status}): ${data.error || data.raw || 'Unknown error'}`;
+        return;
+      }
+      catalogStatus.textContent = `Reloaded: ${data.newCount || 0} new, ${data.usedCount || 0} used`;
+      await loadCatalogSource();
+    }
+
+    async function loadRequests() {
+      const { response, data } = await fetchJsonSafe('/api/requests');
+      if (!response.ok) return;
+      requestBody.innerHTML = (data.requests || []).map((r) => `
+        <tr>
+          <td>${esc(new Date(r.time).toLocaleString())}</td>
+          <td>${esc(r.provider)}</td>
+          <td>${esc(r.status)}</td>
+          <td>${esc(r.senderMessage)}</td>
+          <td>${esc(r.matchedDevice)}</td>
+          <td>${esc(r.error)}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadGrouped() {
+      const { response, data } = await fetchJsonSafe('/api/grouped-requests');
+      if (!response.ok) return;
+      groupedBody.innerHTML = (data.grouped || []).map((g, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${esc(g.sampleMessage || g.key)}</td>
+          <td>${esc(g.count)}</td>
+          <td>${esc(g.lastSeen ? new Date(g.lastSeen).toLocaleString() : '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('saveProvider').addEventListener('click', saveProvider);
+    document.getElementById('saveCsv').addEventListener('click', saveCatalogSource);
+    document.getElementById('reloadCatalog').addEventListener('click', reloadCatalog);
+    document.getElementById('refreshRequests').addEventListener('click', loadRequests);
+    document.getElementById('refreshGrouped').addEventListener('click', loadGrouped);
+
+    loadProviders();
+    loadCatalogSource();
+    loadRequests();
+    loadGrouped();
+    setInterval(() => {
+      loadRequests();
+      loadGrouped();
+    }, 7000);
+  </script>
+</body>
+</html>

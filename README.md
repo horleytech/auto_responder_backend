@@ -1,36 +1,73 @@
-# Auto Responder Backend
+# Auto Responder Backend (ChatGPT + Qwen) + Dashboard
 
-This is a lightweight Node.js backend for an Android Auto Responder app. It uses OpenAI's ChatGPT to decide whether to respond to incoming messages based on specific keywords and prompts.
+This version keeps only the essentials:
+- Your CSV-based catalog matching logic
+- Provider switching between ChatGPT and Qwen
+- Request logging and grouped request frequency
+- Dashboard controls for provider + CSV URL updates
 
----
+## 1) Setup
 
-## 🚀 Features
+```bash
+cp .env.example .env
+npm install
+npm start
+```
 
-- Connects to OpenAI's ChatGPT API
-- Uses a custom prompt to filter valid responses
-- Only replies with `"Available"` (or a custom response) if the AI detects availability
-- Returns no response for irrelevant or invalid messages
-- Configurable via `.env` file
-- Optimized for real-time use
+Dashboard: `http://localhost:3000/`
 
----
+## 2) Environment Variables
 
-## 🧠 How It Works
-
-1. The Android app sends a message (e.g. "Do you have iPhone 13?") to the backend.
-2. The backend forwards this to ChatGPT using a system prompt.
-3. If ChatGPT responds with `"available"` (or variation), it sends back a custom reply.
-4. Otherwise, it returns nothing (`204 No Content`).
-
----
-
-## 🔧 .env Configuration
-
-Create a `.env` file in the root directory and add the following:
+Required:
 
 ```env
-OPENAI_CHATGPT=your-chatgpt-api-key
-CUSTOM_RESPONSE=Available
-TRIGGER_KEYWORD=available
+API_KEY=your-secret-incoming-key
+OPENAI_CHATGPT=your-openai-key
+QWEN_API_KEY=your-qwen-key
+```
+
+Optional:
+
+```env
 PORT=3000
-PROMPT_TEMPLATE=If the message contains a listed product, respond ONLY with "available". If not, say nothing.
+DEFAULT_AI_PROVIDER=chatgpt
+CHATGPT_MODEL=gpt-4o-mini
+QWEN_MODEL=qwen-plus
+QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+MAX_REQUEST_LOG=300
+CUSTOM_RESPONSE=Available
+GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
+```
+
+## 3) API
+
+- `POST /api/respond` (requires header `x-api-key`)
+- `GET /api/providers`
+- `POST /api/providers` (requires `x-api-key`)
+- `GET /api/catalog-source`
+- `POST /api/catalog-source` (requires `x-api-key`, saves new CSV URL and reloads)
+- `POST /api/reload-catalog` (requires `x-api-key`)
+- `GET /api/requests`
+- `GET /api/grouped-requests`
+- `GET /healthz`
+
+## 4) Dashboard behavior
+
+The dashboard now includes:
+- Provider switcher (ChatGPT/Qwen)
+- API key input used for secure save/reload actions
+- CSV URL input (patch your catalog source from UI)
+- Full request log table
+- Grouped request frequency table
+
+## 5) Deploy notes (Vercel)
+
+- Keep Root Directory as `.`
+- Redeploy after each merge
+- If `/api/*` returns 404, redeploy latest commit and test:
+
+```bash
+curl -i https://YOUR-DOMAIN/api/providers
+curl -i https://YOUR-DOMAIN/api/requests
+curl -i https://YOUR-DOMAIN/api/grouped-requests
+```
