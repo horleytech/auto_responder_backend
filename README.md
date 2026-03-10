@@ -21,7 +21,13 @@ This project is a Node.js service for market-message auto responses. It supports
 
 ## Environment Variables
 
-Create a `.env` file in the project root.
+> Never commit your real `.env` to git. Rotate keys immediately if they were ever committed.
+
+Copy `.env.example` to `.env` in the project root and fill your real values.
+
+```bash
+cp .env.example .env
+```
 
 ### Required
 
