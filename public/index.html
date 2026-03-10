@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto Responder Dashboard</title>
+  <link rel="stylesheet" href="/css/dashboard.css" />
+</head>
+<body>
+  <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+    <h1>Market Request Dashboard</h1>
+    <a class="home-link" href="https://scrapebot.horleytech.com/hub">Home</a>
+  </div>
+
+  <div class="card row">
+    <label>Admin API Key:</label>
+    <input id="apiKey" type="password" placeholder="x-api-key for save/reload actions" />
+    <span id="persistenceMode" class="hint">Storage: ...</span>
+  </div>
+
+  <div class="card row">
+    <label for="provider">Active Provider:</label>
+    <select id="provider"></select>
+    <button id="saveProvider">Save Provider</button>
+    <span id="providerStatus" class="hint"></span>
+  </div>
+
+  <div class="card row">
+    <label for="csvUrl">CSV URL:</label>
+    <input id="csvUrl" type="text" placeholder="https://.../export?format=csv" />
+    <button id="saveCsv">Save + Reload Catalog</button>
+    <button id="reloadCatalog">Reload Catalog</button>
+    <span id="catalogStatus" class="hint"></span>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Grouped Requests (Most Frequent)</strong>
+      <button id="refreshGrouped">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Request</th><th>Count</th><th>Last Seen</th></tr>
+        </thead>
+        <tbody id="groupedBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>All Incoming Requests</strong>
+      <button id="refreshRequests">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Provider</th><th>Status</th><th>Sender Message</th><th>Matched Device</th><th>Error</th></tr>
+        </thead>
+        <tbody id="requestBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
