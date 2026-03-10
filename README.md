@@ -73,3 +73,24 @@ If Firebase is set, request records and settings (active provider + CSV URL) per
 - View all incoming requests
 - View grouped/frequency requests
 - Same-tab Home button to `https://scrapebot.horleytech.com/hub`
+
+
+## Core Logic Guarantee
+
+Your original responder logic is preserved:
+- same forbidden phrase lists,
+- same category detection flow from AI JSON,
+- same judgment order (forbidden first, then supported device),
+- same dynamic response rotation,
+- same `204` behavior for forbidden/no-match.
+
+Improvements only add organization, dashboard controls, provider switching (ChatGPT/Qwen), and optional Firebase persistence for records/settings.
+
+
+## Vercel Runtime Error Fix
+
+If Vercel shows:
+
+`Function Runtimes must have a valid version, for example now-php@1.0.0.`
+
+Use the pinned runtime in `vercel.json` (`@vercel/node@3.2.26`) and redeploy.

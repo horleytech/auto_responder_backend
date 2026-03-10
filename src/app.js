@@ -1,5 +1,12 @@
 const express = require('express');
-const { API_KEY, CUSTOM_RESPONSE, DEFAULT_AI_PROVIDER, GOOGLE_SHEETS_CSV_URL } = require('./config/env');
+const {
+  API_KEY,
+  OPENAI_API_KEY,
+  QWEN_API_KEY,
+  CUSTOM_RESPONSE,
+  DEFAULT_AI_PROVIDER,
+  GOOGLE_SHEETS_CSV_URL,
+} = require('./config/env');
 const { firestore } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
 const { createProviderService } = require('./services/providerService');
@@ -11,8 +18,8 @@ app.use(express.json());
 app.use(express.static('public'));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-if (!API_KEY) {
-  console.error('❌ Missing API_KEY in environment');
+if (!API_KEY || (!OPENAI_API_KEY && !QWEN_API_KEY)) {
+  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one of OPENAI_CHATGPT / QWEN_API_KEY.');
   process.exit(1);
 }
 
@@ -138,6 +145,10 @@ app.get('/api/grouped-requests', async (req, res) => {
 });
 
 app.post('/api/respond', async (req, res) => {
+  // Keep original core behavior from your backend:
+  // - strict x-api-key auth
+  // - AI JSON extraction
+  // - forbidden => 204, supported device => dynamic response, else 204
   if (!isAuthorized(req)) return res.sendStatus(403);
 
   const userMessage = req.body?.senderMessage;
@@ -174,6 +185,7 @@ app.post('/api/respond', async (req, res) => {
 
     requestEntry.rawReply = aiResponse;
 
+    // JUDGEMENT 1: CHECK FORBIDDEN (same behavior)
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       requestEntry.status = 'blocked_forbidden';
       requestEntry.matchedForbidden = foundForbidden;
@@ -181,6 +193,7 @@ app.post('/api/respond', async (req, res) => {
       return res.sendStatus(204);
     }
 
+    // JUDGEMENT 2: CHECK SUPPORTED DEVICE (same behavior)
     if (foundDevice && activeSupportedList.includes(foundDevice)) {
       const dynamic = DYNAMIC_RESPONSES[responseIndex];
       responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
