@@ -21,10 +21,15 @@
     .failed { background: #6a1d1d; }
     .received { background: #204f6a; }
     .hint { opacity: 0.8; font-size: 13px; }
+    .home-link { border-radius: 6px; padding: 8px 12px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; text-decoration: none; }
+    .home-link:hover { background: #18213d; }
   </style>
 </head>
 <body>
-  <h1>Market Request Dashboard</h1>
+  <div class="row" style="justify-content:space-between; margin-bottom: 12px;">
+    <h1 style="margin:0;">Market Request Dashboard</h1>
+    <a class="home-link" href="https://scrapebot.horleytech.com/hub" target="_blank" rel="noopener noreferrer">Home</a>
+  </div>
 
   <div class="card row">
     <label for="provider">Default AI Provider:</label>
@@ -56,11 +61,31 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Most Requested Items (Frequency)</strong>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Requested Text</th>
+            <th>Count</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="topRequestTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <script>
     const providerSelect = document.getElementById('provider');
     const providerStatus = document.getElementById('providerStatus');
     const requestTableBody = document.getElementById('requestTableBody');
     const persistenceMode = document.getElementById('persistenceMode');
+    const topRequestTableBody = document.getElementById('topRequestTableBody');
 
     function esc(text) {
       return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -141,6 +166,31 @@
       }).join('');
     }
 
+
+    function renderTopRequests(topRequests) {
+      topRequestTableBody.innerHTML = (topRequests || []).map((entry, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${esc(entry.sampleMessage || entry.key)}</td>
+          <td>${esc(entry.count)}</td>
+          <td>${esc(entry.lastSeen ? new Date(entry.lastSeen).toLocaleString() : '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadAnalytics() {
+      try {
+        const { response, data } = await fetchJsonSafe('/api/analytics');
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to load analytics.');
+        }
+
+        renderTopRequests(data.topRequests || []);
+      } catch (err) {
+        providerStatus.textContent = `Analytics load failed: ${err.message}`;
+      }
+    }
+
     async function loadRequests() {
       try {
         const { response, data } = await fetchJsonSafe('/api/requests');
@@ -155,11 +205,18 @@
     }
 
     document.getElementById('saveProvider').addEventListener('click', saveProvider);
-    document.getElementById('refresh').addEventListener('click', loadRequests);
+    document.getElementById('refresh').addEventListener('click', async () => {
+      await loadRequests();
+      await loadAnalytics();
+    });
 
     loadProviders();
     loadRequests();
-    setInterval(loadRequests, 5000);
+    loadAnalytics();
+    setInterval(async () => {
+      await loadRequests();
+      await loadAnalytics();
+    }, 5000);
   </script>
 </body>
 </html>

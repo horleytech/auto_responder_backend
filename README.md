@@ -13,6 +13,8 @@ This project is a Node.js service for market-message auto responses. It supports
 - Dashboard UI at `/` for:
   - Viewing incoming requests in an organized table
   - Switching default provider between ChatGPT and Qwen
+  - Home button back to HorleyTech hub
+  - Viewing top requested items and request frequency
 - Persistence modes:
   - Firebase Firestore (recommended for Vercel/serverless)
   - In-memory fallback (if Firebase is not configured)
@@ -107,6 +109,10 @@ Updates active provider.
 }
 ```
 
+### `GET /api/analytics`
+
+Returns aggregated request-frequency data (top repeated request texts) for dashboard insights.
+
 ### `GET /healthz`
 
 Returns service health and current persistence mode (`firebase` or `memory`).
@@ -116,6 +122,8 @@ Returns service health and current persistence mode (`firebase` or `memory`).
 Use your deployed Vercel URL root as the dashboard link:
 
 `https://YOUR-VERCEL-DOMAIN/`
+
+Dashboard includes a Home button that links to: `https://scrapebot.horleytech.com/hub`
 
 Use this API webhook URL in Horley Tech Scrapebot for incoming requests:
 

@@ -68,6 +68,43 @@ function normalize(text) {
   return String(text || '').toLowerCase().replace(/[^\w]/g, '').trim();
 }
 
+function makeRequestKey(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function computeTopRequests(requests, limit = 10) {
+  const map = new Map();
+
+  for (const request of requests) {
+    const key = request.requestKey || makeRequestKey(request.senderMessage);
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        count: 0,
+        sampleMessage: request.senderMessage || '',
+        lastSeen: request.time || null,
+      });
+    }
+
+    const current = map.get(key);
+    current.count += 1;
+
+    if (request.time && (!current.lastSeen || request.time > current.lastSeen)) {
+      current.lastSeen = request.time;
+      current.sampleMessage = request.senderMessage || current.sampleMessage;
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => b.count - a.count || String(b.lastSeen || '').localeCompare(String(a.lastSeen || '')))
+    .slice(0, limit);
+}
+
 function hasProviderCredentials(provider) {
   return provider === 'chatgpt' ? Boolean(CHATGPT_API_KEY) : Boolean(process.env.QWEN_API_KEY);
 }
@@ -199,6 +236,23 @@ app.get('/api/requests', async (req, res) => {
   }
 });
 
+
+app.get('/api/analytics', async (req, res) => {
+  try {
+    const requests = await fetchRecentRequests();
+    const topRequests = computeTopRequests(requests);
+
+    return res.send({
+      persistence: firestore ? 'firebase' : 'memory',
+      totalRequests: requests.length,
+      uniqueRequests: topRequests.length,
+      topRequests,
+    });
+  } catch (err) {
+    return res.status(500).send({ error: 'Failed to fetch analytics', details: err.message });
+  }
+});
+
 app.post('/api/respond', async (req, res) => {
   const userMessage = req.body?.senderMessage;
   const persistedProvider = await getActiveProvider();
@@ -208,6 +262,7 @@ app.post('/api/respond', async (req, res) => {
     time: new Date().toISOString(),
     provider,
     senderMessage: userMessage || '',
+    requestKey: makeRequestKey(userMessage),
     trigger: TRIGGER,
     status: 'received',
   };
