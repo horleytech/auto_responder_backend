@@ -7,6 +7,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
+const CHATGPT_API_KEY = process.env.OPENAI_CHATGPT || process.env.OPENAI_API_KEY || '';
 const TRIGGER = process.env.TRIGGER_KEYWORD?.toLowerCase() || 'available';
 const CUSTOM_RESPONSE = process.env.CUSTOM_RESPONSE || 'Available';
 const SYSTEM_PROMPT = process.env.PROMPT_TEMPLATE || `If the message contains a listed product, respond ONLY with "${TRIGGER}". If not, say nothing.`;
@@ -17,7 +18,7 @@ let activeProvider = (process.env.DEFAULT_AI_PROVIDER || 'chatgpt').toLowerCase(
 const memoryLog = [];
 
 const clients = {
-  chatgpt: new OpenAI({ apiKey: process.env.OPENAI_CHATGPT || 'missing-openai-key' }),
+  chatgpt: new OpenAI({ apiKey: CHATGPT_API_KEY || 'missing-openai-key' }),
   qwen: new OpenAI({
     apiKey: process.env.QWEN_API_KEY || 'missing-qwen-key',
     baseURL: process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
@@ -68,24 +69,33 @@ function normalize(text) {
 }
 
 function hasProviderCredentials(provider) {
-  return provider === 'chatgpt' ? Boolean(process.env.OPENAI_CHATGPT) : Boolean(process.env.QWEN_API_KEY);
+  return provider === 'chatgpt' ? Boolean(CHATGPT_API_KEY) : Boolean(process.env.QWEN_API_KEY);
 }
 
 async function getActiveProvider() {
   if (!firestore) return activeProvider;
-  const doc = await firestore.doc(SETTINGS_DOC_PATH).get();
-  if (!doc.exists) return activeProvider;
-  const provider = String(doc.data()?.activeProvider || activeProvider).toLowerCase();
-  return clients[provider] ? provider : activeProvider;
+  try {
+    const doc = await firestore.doc(SETTINGS_DOC_PATH).get();
+    if (!doc.exists) return activeProvider;
+    const provider = String(doc.data()?.activeProvider || activeProvider).toLowerCase();
+    return clients[provider] ? provider : activeProvider;
+  } catch (err) {
+    console.error('⚠️ Failed to read provider from Firebase, using runtime fallback:', err.message);
+    return activeProvider;
+  }
 }
 
 async function setActiveProvider(provider) {
   activeProvider = provider;
   if (!firestore) return;
-  await firestore.doc(SETTINGS_DOC_PATH).set({
-    activeProvider: provider,
-    updatedAt: new Date().toISOString(),
-  }, { merge: true });
+  try {
+    await firestore.doc(SETTINGS_DOC_PATH).set({
+      activeProvider: provider,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('⚠️ Failed to save provider to Firebase, using runtime fallback:', err.message);
+  }
 }
 
 async function saveRequest(entry) {
@@ -95,19 +105,27 @@ async function saveRequest(entry) {
   }
 
   if (!firestore) return;
-  await firestore.collection('requests').doc(entry.id).set(entry);
+  try {
+    await firestore.collection('requests').doc(entry.id).set(entry);
+  } catch (err) {
+    console.error('⚠️ Failed to write request log to Firebase, kept in memory:', err.message);
+  }
 }
 
 async function fetchRecentRequests() {
   if (!firestore) return memoryLog;
+  try {
+    const snapshot = await firestore
+      .collection('requests')
+      .orderBy('time', 'desc')
+      .limit(MAX_REQUEST_LOG)
+      .get();
 
-  const snapshot = await firestore
-    .collection('requests')
-    .orderBy('time', 'desc')
-    .limit(MAX_REQUEST_LOG)
-    .get();
-
-  return snapshot.docs.map((doc) => doc.data());
+    return snapshot.docs.map((doc) => doc.data());
+  } catch (err) {
+    console.error('⚠️ Failed to fetch Firebase request logs, using memory fallback:', err.message);
+    return memoryLog;
+  }
 }
 
 function listProviders(currentProvider) {

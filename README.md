@@ -25,6 +25,8 @@ Create a `.env` file in the project root.
 
 ```env
 OPENAI_CHATGPT=your-openai-api-key
+# optional alias also supported:
+# OPENAI_API_KEY=your-openai-api-key
 QWEN_API_KEY=your-qwen-api-key
 ```
 
@@ -138,3 +140,42 @@ Set Root Directory to `.` and redeploy.
 `sh: line 1: vite: command not found` / `Command "vite build" exited with 127`
 
 This is a backend project (Express), not Vite. Set framework to `Other`, remove `vite build`, and redeploy.
+
+
+## Troubleshooting
+
+### Provider dropdown stuck on "Loading providers..."
+
+This usually means Firestore reads are failing in production. The backend now falls back to in-memory provider state if Firebase read/write errors happen, so provider switching should still work while you fix Firebase IAM/rules.
+
+### OpenAI `insufficient_quota` in logs
+
+Your server is working, but the selected provider key has no quota/billing left.
+
+- Switch to `qwen` from the dashboard (or `POST /api/providers`).
+- Or top up/enable billing for your OpenAI project.
+- You can verify active provider with `GET /api/providers`.
+
+### VPS/PM2 update commands
+
+If you deploy on your own Ubuntu server with PM2:
+
+```bash
+cd ~/auto_responder_backend
+git status
+# if you have local edits you want to discard:
+git reset --hard
+git pull origin main --rebase
+npm install
+pm2 restart auto-responder
+pm2 logs auto-responder --lines 50
+```
+
+If `git pull` says you have unstaged changes and you want to keep them:
+
+```bash
+cd ~/auto_responder_backend
+git stash
+git pull origin main --rebase
+git stash pop
+```
