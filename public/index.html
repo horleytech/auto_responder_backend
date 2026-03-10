@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto Responder Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0b1020; color: #f3f5ff; margin: 0; padding: 24px; }
+    h1 { margin-top: 0; }
+    .card { background: #151c33; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    select, button { border-radius: 6px; padding: 8px 10px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; }
+    select { min-width: 260px; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #2c385f; padding: 10px; text-align: left; font-size: 13px; vertical-align: top; }
+    th { position: sticky; top: 0; background: #151c33; }
+    .table-wrap { max-height: 65vh; overflow: auto; }
+    .status-pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; }
+    .matched { background: #175b2a; }
+    .no_match { background: #4a4f66; }
+    .failed { background: #6a1d1d; }
+    .received { background: #204f6a; }
+    .hint { opacity: 0.8; font-size: 13px; }
+    .home-link { border-radius: 6px; padding: 8px 12px; border: 1px solid #4d5b8d; background: #10172b; color: #f3f5ff; text-decoration: none; }
+    .home-link:hover { background: #18213d; }
+  </style>
+</head>
+<body>
+  <div class="row" style="justify-content:space-between; margin-bottom: 12px;">
+    <h1 style="margin:0;">Market Request Dashboard</h1>
+    <a class="home-link" href="https://scrapebot.horleytech.com/hub">Home</a>
+  </div>
+
+  <div class="card row">
+    <label for="provider">Default AI Provider:</label>
+    <select id="provider"></select>
+    <button id="saveProvider">Save Provider</button>
+    <span id="providerStatus"></span>
+    <span class="hint" id="persistenceMode"></span>
+    <button id="runChecks" type="button">Run Checks</button>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Incoming Requests</strong>
+      <button id="refresh">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Sender Message</th>
+            <th>AI Reply</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="requestTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Dashboard Diagnostics</strong>
+    </div>
+    <div id="diagBox" class="hint">No checks run yet.</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+      <strong>Most Requested Items (Frequency)</strong>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Requested Text</th>
+            <th>Count</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="topRequestTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const providerSelect = document.getElementById('provider');
+    const providerStatus = document.getElementById('providerStatus');
+    const requestTableBody = document.getElementById('requestTableBody');
+    const persistenceMode = document.getElementById('persistenceMode');
+    const topRequestTableBody = document.getElementById('topRequestTableBody');
+    const diagBox = document.getElementById('diagBox');
+
+    function esc(text) {
+      return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function fetchJsonSafe(url, options) {
+      const response = await fetch(url, options);
+      const raw = await response.text();
+
+      try {
+        return { response, data: raw ? JSON.parse(raw) : {} };
+      } catch {
+        const preview = raw.slice(0, 120).replace(/\s+/g, ' ');
+        throw new Error(`Expected JSON from ${url}, got: ${preview || '[empty response]'}`);
+      }
+    }
+
+    async function loadProviders() {
+      providerStatus.textContent = 'Loading providers...';
+      providerSelect.disabled = true;
+      try {
+        const { response, data } = await fetchJsonSafe('/api/providers');
+
+        if (!response.ok || !Array.isArray(data.providers)) {
+          throw new Error(data.error || 'Failed to load providers.');
+        }
+
+        providerSelect.innerHTML = data.providers.map((provider) => {
+          const configuredMark = provider.configured ? '✅' : '⚠️';
+          const configuredNote = provider.configured ? '' : ' (missing key)';
+          const selected = provider.name === data.activeProvider ? 'selected' : '';
+          return `<option value="${provider.name}" ${selected}>${configuredMark} ${provider.name} · ${provider.model}${configuredNote}</option>`;
+        }).join('');
+
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        providerStatus.textContent = `Current: ${data.activeProvider}`;
+      } catch (err) {
+        providerStatus.textContent = `Provider load failed: ${err.message}`;
+      } finally {
+        providerSelect.disabled = false;
+      }
+    }
+
+    async function saveProvider() {
+      providerStatus.textContent = 'Saving...';
+      try {
+        const { response, data } = await fetchJsonSafe('/api/providers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: providerSelect.value }),
+        });
+
+        if (!response.ok) {
+          providerStatus.textContent = data.error || 'Failed to update provider.';
+          return;
+        }
+
+        providerStatus.textContent = `Saved: ${data.activeProvider}`;
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        await loadProviders();
+      } catch (err) {
+        providerStatus.textContent = `Failed to save provider: ${err.message}`;
+      }
+    }
+
+    function renderRequests(requests) {
+      requestTableBody.innerHTML = requests.map((request) => {
+        const statusClass = esc(request.status || 'received');
+        return `
+          <tr>
+            <td>${esc(new Date(request.time).toLocaleString())}</td>
+            <td>${esc(request.provider)}</td>
+            <td><span class="status-pill ${statusClass}">${esc(request.status)}</span></td>
+            <td>${esc(request.senderMessage)}</td>
+            <td>${esc(request.rawReply)}</td>
+            <td>${esc(request.error)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+
+    function renderTopRequests(topRequests) {
+      topRequestTableBody.innerHTML = (topRequests || []).map((entry, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${esc(entry.sampleMessage || entry.key)}</td>
+          <td>${esc(entry.count)}</td>
+          <td>${esc(entry.lastSeen ? new Date(entry.lastSeen).toLocaleString() : '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadAnalytics() {
+      try {
+        const { response, data } = await fetchJsonSafe('/api/analytics');
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to load analytics.');
+        }
+
+        renderTopRequests(data.topRequests || []);
+      } catch (err) {
+        providerStatus.textContent = `Analytics load failed: ${err.message}`;
+      }
+    }
+
+
+
+    async function runChecks() {
+      const lines = [];
+      try {
+        const { response, data } = await fetchJsonSafe('/api/providers');
+        lines.push(`Providers endpoint: ${response.status}`);
+        if (Array.isArray(data.providers)) {
+          lines.push(`Providers loaded: ${data.providers.length}`);
+          lines.push(`Active provider: ${data.activeProvider || 'unknown'}`);
+          const configured = data.providers.map((p) => `${p.name}:${p.configured ? 'configured' : 'missing_key'}`).join(', ');
+          lines.push(`Provider keys: ${configured}`);
+        } else {
+          lines.push('Providers payload invalid (no providers array).');
+        }
+      } catch (err) {
+        lines.push(`Providers check failed: ${err.message}`);
+      }
+
+      try {
+        const { response, data } = await fetchJsonSafe('/api/requests');
+        lines.push(`Requests endpoint: ${response.status}`);
+        lines.push(`Request count: ${data.count ?? 'unknown'}`);
+      } catch (err) {
+        lines.push(`Requests check failed: ${err.message}`);
+      }
+
+      diagBox.innerHTML = lines.map((line) => `<div>${esc(line)}</div>`).join('');
+    }
+
+    async function loadRequests() {
+      try {
+        const { response, data } = await fetchJsonSafe('/api/requests');
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to load requests.');
+        }
+        persistenceMode.textContent = `Storage: ${data.persistence || 'memory'}`;
+        renderRequests(data.requests || []);
+      } catch (err) {
+        providerStatus.textContent = `Requests load failed: ${err.message}`;
+      }
+    }
+
+    document.getElementById('saveProvider').addEventListener('click', saveProvider);
+    document.getElementById('runChecks').addEventListener('click', runChecks);
+    document.getElementById('refresh').addEventListener('click', async () => {
+      await loadRequests();
+      await loadAnalytics();
+    });
+
+    loadProviders();
+    loadRequests();
+    loadAnalytics();
+    runChecks();
+    setInterval(async () => {
+      await loadRequests();
+      await loadAnalytics();
+    }, 5000);
+  </script>
+</body>
+</html>
