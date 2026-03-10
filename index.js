@@ -1,64 +1,227 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const { OpenAI } = require('openai');
+const admin = require('firebase-admin');
 require('dotenv').config();
 
 const app = express();
-app.use(bodyParser.json());
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_CHATGPT,
-});
+app.use(express.json());
+app.use(express.static('public'));
 
 const TRIGGER = process.env.TRIGGER_KEYWORD?.toLowerCase() || 'available';
 const CUSTOM_RESPONSE = process.env.CUSTOM_RESPONSE || 'Available';
 const SYSTEM_PROMPT = process.env.PROMPT_TEMPLATE || `If the message contains a listed product, respond ONLY with "${TRIGGER}". If not, say nothing.`;
+const MAX_REQUEST_LOG = Number(process.env.MAX_REQUEST_LOG || 250);
+const SETTINGS_DOC_PATH = 'app/settings';
 
-function normalize(text) {
-  return text.toLowerCase().replace(/[^\w]/g, '').trim();
+let activeProvider = (process.env.DEFAULT_AI_PROVIDER || 'chatgpt').toLowerCase();
+const memoryLog = [];
+
+const clients = {
+  chatgpt: new OpenAI({ apiKey: process.env.OPENAI_CHATGPT || 'missing-openai-key' }),
+  qwen: new OpenAI({
+    apiKey: process.env.QWEN_API_KEY || 'missing-qwen-key',
+    baseURL: process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  }),
+};
+
+const models = {
+  chatgpt: process.env.CHATGPT_MODEL || 'gpt-4o',
+  qwen: process.env.QWEN_MODEL || 'qwen-plus',
+};
+
+function parseFirebaseServiceAccount() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.private_key) {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
-app.post('/api/respond', async (req, res) => {
-  console.log("🔽 Incoming request body:", req.body); // Debug log
+function initFirestore() {
+  const serviceAccount = parseFirebaseServiceAccount();
+  if (!serviceAccount) return null;
 
+  try {
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id,
+      });
+    }
+    return admin.firestore();
+  } catch (err) {
+    console.error('⚠️ Firebase init failed, using memory fallback:', err.message);
+    return null;
+  }
+}
+
+const firestore = initFirestore();
+
+function normalize(text) {
+  return String(text || '').toLowerCase().replace(/[^\w]/g, '').trim();
+}
+
+function hasProviderCredentials(provider) {
+  return provider === 'chatgpt' ? Boolean(process.env.OPENAI_CHATGPT) : Boolean(process.env.QWEN_API_KEY);
+}
+
+async function getActiveProvider() {
+  if (!firestore) return activeProvider;
+  const doc = await firestore.doc(SETTINGS_DOC_PATH).get();
+  if (!doc.exists) return activeProvider;
+  const provider = String(doc.data()?.activeProvider || activeProvider).toLowerCase();
+  return clients[provider] ? provider : activeProvider;
+}
+
+async function setActiveProvider(provider) {
+  activeProvider = provider;
+  if (!firestore) return;
+  await firestore.doc(SETTINGS_DOC_PATH).set({
+    activeProvider: provider,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function saveRequest(entry) {
+  memoryLog.unshift(entry);
+  if (memoryLog.length > MAX_REQUEST_LOG) {
+    memoryLog.length = MAX_REQUEST_LOG;
+  }
+
+  if (!firestore) return;
+  await firestore.collection('requests').doc(entry.id).set(entry);
+}
+
+async function fetchRecentRequests() {
+  if (!firestore) return memoryLog;
+
+  const snapshot = await firestore
+    .collection('requests')
+    .orderBy('time', 'desc')
+    .limit(MAX_REQUEST_LOG)
+    .get();
+
+  return snapshot.docs.map((doc) => doc.data());
+}
+
+function listProviders(currentProvider) {
+  return {
+    activeProvider: currentProvider,
+    persistence: firestore ? 'firebase' : 'memory',
+    providers: ['chatgpt', 'qwen'].map((name) => ({
+      name,
+      model: models[name],
+      configured: hasProviderCredentials(name),
+    })),
+  };
+}
+
+async function runProviderCompletion(provider, userMessage) {
+  if (!clients[provider]) {
+    throw new Error(`Unsupported provider: ${provider}`);
+  }
+
+  if (!hasProviderCredentials(provider)) {
+    throw new Error(`Missing credentials for provider: ${provider}`);
+  }
+
+  const completion = await clients[provider].chat.completions.create({
+    model: models[provider],
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userMessage },
+    ],
+    max_tokens: 10,
+    temperature: 0,
+  });
+
+  return completion.choices[0]?.message?.content?.trim() || '';
+}
+
+app.get('/api/providers', async (req, res) => {
+  const currentProvider = await getActiveProvider();
+  return res.send(listProviders(currentProvider));
+});
+
+app.post('/api/providers', async (req, res) => {
+  const requestedProvider = String(req.body?.provider || '').toLowerCase().trim();
+
+  if (!clients[requestedProvider]) {
+    return res.status(400).send({ error: 'Unsupported provider. Use "chatgpt" or "qwen".' });
+  }
+
+  await setActiveProvider(requestedProvider);
+  return res.send(listProviders(requestedProvider));
+});
+
+app.get('/api/requests', async (req, res) => {
+  try {
+    const requests = await fetchRecentRequests();
+    return res.send({
+      count: requests.length,
+      requests,
+      persistence: firestore ? 'firebase' : 'memory',
+    });
+  } catch (err) {
+    return res.status(500).send({ error: 'Failed to fetch requests', details: err.message });
+  }
+});
+
+app.post('/api/respond', async (req, res) => {
   const userMessage = req.body?.senderMessage;
+  const persistedProvider = await getActiveProvider();
+  const provider = String(req.body?.provider || persistedProvider).toLowerCase();
+  const requestEntry = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    time: new Date().toISOString(),
+    provider,
+    senderMessage: userMessage || '',
+    trigger: TRIGGER,
+    status: 'received',
+  };
+
+  console.log('🔽 Incoming request body:', req.body);
+
   if (!userMessage) {
-    console.warn("⚠️ Missing senderMessage in request.");
+    requestEntry.status = 'failed';
+    requestEntry.error = 'Missing senderMessage';
+    await saveRequest(requestEntry);
     return res.status(400).send({ error: 'Missing senderMessage' });
   }
 
   try {
-    const gpt = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
-      max_tokens: 10,
-      temperature: 0,
-    });
-
-    const reply = gpt.choices[0]?.message?.content?.trim() || '';
+    const reply = await runProviderCompletion(provider, userMessage);
     const normalized = normalize(reply);
 
-    console.log("🧠 GPT raw reply:", reply);
-    console.log("🔍 Normalized reply:", normalized);
+    requestEntry.rawReply = reply;
+    requestEntry.normalizedReply = normalized;
 
     if (normalized === TRIGGER) {
-      console.log("✅ Match found. Sending response...");
-      return res.send({
-        data: [
-          { message: CUSTOM_RESPONSE }
-        ]
-      });
+      requestEntry.status = 'matched';
+      requestEntry.outboundResponse = CUSTOM_RESPONSE;
+      await saveRequest(requestEntry);
+      return res.send({ data: [{ message: CUSTOM_RESPONSE }] });
     }
 
-    console.log("⛔ No match. No response sent.");
-    return res.status(204).send(); // No reply
+    requestEntry.status = 'no_match';
+    await saveRequest(requestEntry);
+    return res.status(204).send();
   } catch (err) {
-    console.error('💥 OpenAI error:', err);
-    return res.status(500).send({ error: 'Server error' });
+    requestEntry.status = 'failed';
+    requestEntry.error = err.message;
+    await saveRequest(requestEntry);
+    return res.status(500).send({ error: 'Server error', details: err.message });
   }
+});
+
+app.get('/healthz', (req, res) => {
+  res.send({ ok: true, persistence: firestore ? 'firebase' : 'memory' });
 });
 
 const PORT = process.env.PORT || 3000;
