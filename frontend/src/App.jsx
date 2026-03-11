@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from './components/DashboardLayout';
 import AnalyticsPage from './pages/AnalyticsPage';
+import AutoCorrectPage from './pages/AutoCorrectPage';
 import BotLogicPage from './pages/BotLogicPage';
+import MaintenancePage from './pages/MaintenancePage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import { fetchJsonSafe } from './lib/api';
 
 export default function App() {
-  const [activePage, setActivePage] = useState('analytics');
+  const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [apiKey, setApiKey] = useState('');
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
@@ -41,9 +43,11 @@ export default function App() {
 
   return (
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
-      {activePage === 'analytics' && <AnalyticsPage />}
+      {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
       {activePage === 'requests' && <RequestsPage />}
+      {activePage === 'dictionary' && <AutoCorrectPage apiKey={apiKey} />}
       {activePage === 'bot-logic' && <BotLogicPage apiKey={apiKey} />}
+      {activePage === 'maintenance' && <MaintenancePage apiKey={apiKey} />}
       {activePage === 'settings' && (
         <SettingsPage
           apiKey={apiKey}

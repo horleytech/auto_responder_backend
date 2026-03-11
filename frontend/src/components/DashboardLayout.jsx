@@ -1,10 +1,12 @@
 import { House, Moon, Sun } from 'lucide-react';
 
 const navItems = [
-  { id: 'analytics', label: 'Analytics' },
+  { id: 'dashboard', label: 'Dashboard' },
   { id: 'requests', label: 'Requests' },
+  { id: 'dictionary', label: 'Dictionary' },
   { id: 'bot-logic', label: 'Bot Logic' },
-  { id: 'settings', label: 'Configuration' },
+  { id: 'maintenance', label: 'Maintenance' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 export default function DashboardLayout({ activePage, onPageChange, darkMode, onToggleTheme, children }) {
@@ -14,7 +16,7 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
         <aside className="sticky top-4 h-[calc(100vh-2rem)] w-64 rounded-2xl border border-slate-200 bg-white p-4 shadow-premium dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-8">
             <h1 className="text-lg font-semibold">Auto Responder</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Premium Control Center</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">System Console</p>
           </div>
 
           <a
@@ -49,7 +51,6 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
             {darkMode ? <Sun size={16} /> : <Moon size={16} />} {darkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
         </aside>
-
         <main className="flex-1">{children}</main>
       </div>
     </div>
