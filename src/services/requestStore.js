@@ -13,7 +13,16 @@ function createRequestStore(firestore) {
 
     if (!firestore) return;
     try {
-      await firestore.collection('requests').doc(entry.id).set(entry);
+      await firestore.collection('ar_requests').doc(entry.id).set(entry);
+      if (entry.senderId) {
+        await firestore.collection('ar_customers').doc(String(entry.senderId)).set(
+          {
+            senderId: String(entry.senderId),
+            lastSeen: entry.time,
+          },
+          { merge: true }
+        );
+      }
     } catch (err) {
       console.error('⚠️ Failed to persist request to Firebase:', err.message);
     }
@@ -22,7 +31,7 @@ function createRequestStore(firestore) {
   async function list() {
     if (!firestore) return memoryLog;
     try {
-      const snapshot = await firestore.collection('requests').orderBy('time', 'desc').limit(MAX_REQUEST_LOG).get();
+      const snapshot = await firestore.collection('ar_requests').orderBy('time', 'desc').limit(MAX_REQUEST_LOG).get();
       return snapshot.docs.map((doc) => doc.data());
     } catch (err) {
       console.error('⚠️ Failed to read Firebase requests, fallback to memory:', err.message);
@@ -60,7 +69,37 @@ function createRequestStore(firestore) {
       .slice(0, limit);
   }
 
-  return { save, list, grouped };
+  async function analytics(timeframeDays) {
+    const rows = await list();
+    const since = timeframeDays ? Date.now() - timeframeDays * 24 * 60 * 60 * 1000 : null;
+    const filtered = since ? rows.filter((row) => new Date(row.time).getTime() >= since) : rows;
+
+    const topCustomers = new Map();
+    const topDevices = new Map();
+    let blockedRequests = 0;
+
+    for (const row of filtered) {
+      const senderId = row.senderId || 'unknown';
+      topCustomers.set(senderId, (topCustomers.get(senderId) || 0) + 1);
+
+      if (row.matchedDevice) {
+        topDevices.set(row.matchedDevice, (topDevices.get(row.matchedDevice) || 0) + 1);
+      }
+
+      if (row.status === 'blocked_forbidden') blockedRequests += 1;
+    }
+
+    const sortMap = (map) => Array.from(map.entries()).map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count);
+
+    return {
+      totalRequests: filtered.length,
+      blockedRequests,
+      topCustomers: sortMap(topCustomers).slice(0, 10),
+      mostRequestedDevices: sortMap(topDevices).slice(0, 10),
+    };
+  }
+
+  return { save, list, grouped, analytics };
 }
 
 module.exports = { createRequestStore };

@@ -7,6 +7,7 @@ const {
   CUSTOM_RESPONSE,
   DEFAULT_AI_PROVIDER,
   GOOGLE_SHEETS_CSV_URL,
+  ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
 const { firestore } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
@@ -20,19 +21,19 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 if (!API_KEY || (!OPENAI_API_KEY && !QWEN_API_KEY)) {
-  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one of OPENAI_CHATGPT / QWEN_API_KEY.');
+  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one provider key.');
   process.exit(1);
 }
 
 const FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-].map((p) => p.toLowerCase());
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'any iphone lower than iphone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iphone 8', 'iphone 7', 'charging port', 'icloud', 'panel', 'nfid', 'uk', 'air', 'used',
+];
 
 const FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-].map((p) => p.toLowerCase());
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'any iphone lower than iphone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iphone 8', 'iphone 7', 'charging port', 'icloud', 'panel', 'nfid', 'new',
+];
 
 const DYNAMIC_RESPONSES = [
   'Available', 'Available chief', 'Available big chief', 'Available my Oga',
@@ -45,41 +46,13 @@ const DYNAMIC_RESPONSES = [
 ];
 let responseIndex = 0;
 
-const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL);
+const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
 const requestStore = createRequestStore(firestore);
 const settingsStore = createSettingsStore(firestore);
 
 function isAuthorized(req) {
   return req.headers['x-api-key'] === API_KEY;
-}
-
-function getSystemPrompt() {
-  return `
-You are a JSON-based entity extractor for an availability checker.
-Your SOLE purpose is to analyze the user's message and return a JSON object.
-Do not add any other text, conversation, or explanations.
-
-First, determine the category: 'new' or 'used'. If the message contains 'used', the category is 'used'. Otherwise, default to 'new'.
-
-Based on the category, use the appropriate lists:
-
-List of NEW devices: ${catalog.getNewDevices().join(', ')}
-List of NEW forbidden phrases: ${FORBIDDEN_NEW_PHRASES.join(', ')}
-
-List of USED devices: ${catalog.getUsedDevices().join(', ')}
-List of USED forbidden phrases: ${FORBIDDEN_USED_PHRASES.join(', ')}
-
-Return JSON in this exact format:
-{"device": string | null, "forbidden": string | null, "category": "new" | "used"}
-
-RULES:
-1.  "device": Find the *first* item from the active device list that is the *closest match* to the user's request. The string you return MUST be spelled *exactly* as it appears in the list.
-2.  "forbidden": Find the *first* matching forbidden phrase from the active list. The string MUST be spelled *exactly* as it appears in the list. If no forbidden phrase is found, this MUST be null.
-3.  "category": The category you detected ('new' or 'used').
-4.  **PRIORITY:** A message can have BOTH a device and a forbidden phrase. Find both.
-5.  ***"esim" EXCEPTION:*** The phrase "esim" is only forbidden if the message does *not* also mention "physical". If the message contains "physical" (or "physical sim") AND "esim", it is considered "physical" and "esim" should *not* be listed as forbidden.
-`.trim();
 }
 
 app.get('/api/providers', (req, res) => {
@@ -107,9 +80,11 @@ app.post('/api/providers', async (req, res) => {
 
 app.get('/api/catalog-source', (req, res) => {
   res.json({
-    csvUrl: catalog.getCsvUrl(),
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
     newCount: catalog.getNewDevices().length,
     usedCount: catalog.getUsedDevices().length,
+    arrangementCount: Object.keys(catalog.getArrangementMap()).length,
     persistence: firestore ? 'firebase' : 'memory',
   });
 });
@@ -117,15 +92,20 @@ app.get('/api/catalog-source', (req, res) => {
 app.post('/api/catalog-source', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
 
-  const nextUrl = String(req.body?.csvUrl || '').trim();
-  if (!nextUrl) return res.status(400).json({ error: 'Missing csvUrl' });
+  const inventoryCsvUrl = String(req.body?.inventoryCsvUrl || '').trim();
+  const arrangementCsvUrl = String(req.body?.arrangementCsvUrl || '').trim();
 
-  catalog.setCsvUrl(nextUrl);
+  if (!inventoryCsvUrl || !arrangementCsvUrl) {
+    return res.status(400).json({ error: 'Missing inventoryCsvUrl or arrangementCsvUrl' });
+  }
+
+  catalog.setInventoryCsvUrl(inventoryCsvUrl);
+  catalog.setArrangementCsvUrl(arrangementCsvUrl);
   const result = await catalog.loadCatalog();
   if (!result.success) return res.status(400).json(result);
 
-  await settingsStore.write({ csvUrl: nextUrl });
-  return res.json({ csvUrl: catalog.getCsvUrl(), ...result, persistence: firestore ? 'firebase' : 'memory' });
+  await settingsStore.write({ inventoryCsvUrl, arrangementCsvUrl });
+  return res.json({ inventoryCsvUrl, arrangementCsvUrl, ...result, persistence: firestore ? 'firebase' : 'memory' });
 });
 
 app.post('/api/reload-catalog', async (req, res) => {
@@ -145,61 +125,56 @@ app.get('/api/grouped-requests', async (req, res) => {
   res.json({ count: grouped.length, grouped, persistence: firestore ? 'firebase' : 'memory' });
 });
 
+app.get('/api/analytics', async (req, res) => {
+  const timeframe = String(req.query.timeframe || '1m').toLowerCase();
+  const daysMap = { '1w': 7, '1m': 30, '3m': 90, all: null };
+  const timeframeDays = Object.prototype.hasOwnProperty.call(daysMap, timeframe) ? daysMap[timeframe] : 30;
+  const data = await requestStore.analytics(timeframeDays);
+  res.json({ timeframe, ...data, persistence: firestore ? 'firebase' : 'memory' });
+});
+
 app.post('/api/respond', async (req, res) => {
-  // Keep original core behavior from your backend:
-  // - strict x-api-key auth
-  // - AI JSON extraction
-  // - forbidden => 204, supported device => dynamic response, else 204
   if (!isAuthorized(req)) return res.sendStatus(403);
 
   const userMessage = req.body?.senderMessage;
+  const senderId = String(req.body?.senderId || '').trim();
   if (!userMessage) return res.status(400).json({ error: 'Missing senderMessage' });
+  if (!senderId) return res.status(400).json({ error: 'Missing senderId' });
 
   const provider = String(req.body?.provider || providerService.getActiveProvider()).toLowerCase();
   const requestEntry = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     time: new Date().toISOString(),
     provider,
+    senderId,
     senderMessage: userMessage,
     status: 'received',
   };
 
   try {
-    const raw = await providerService.runProvider(provider, getSystemPrompt(), userMessage);
-    let aiResponse;
-    try {
-      aiResponse = JSON.parse(raw);
-    } catch {
-      requestEntry.status = 'failed';
-      requestEntry.error = 'AI response was not valid JSON';
-      requestEntry.rawReply = raw;
-      await requestStore.save(requestEntry);
-      return res.status(500).json({ error: 'AI response was not valid JSON' });
-    }
+    const { gatekeeper, matchmaker } = await providerService.runTwoLayerCheck({
+      provider,
+      userMessage,
+      newForbidden: FORBIDDEN_NEW_PHRASES,
+      usedForbidden: FORBIDDEN_USED_PHRASES,
+      catalog,
+    });
 
-    const category = aiResponse.category;
-    const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
-    const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+    requestEntry.gatekeeper = gatekeeper;
+    requestEntry.matchmaker = matchmaker;
 
-    const activeSupportedList = category === 'used' ? catalog.getUsedDevices() : catalog.getNewDevices();
-    const activeForbiddenList = category === 'used' ? FORBIDDEN_USED_PHRASES : FORBIDDEN_NEW_PHRASES;
-
-    requestEntry.rawReply = aiResponse;
-
-    // JUDGEMENT 1: CHECK FORBIDDEN (same behavior)
-    if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
+    if (!gatekeeper.isApproved) {
       requestEntry.status = 'blocked_forbidden';
-      requestEntry.matchedForbidden = foundForbidden;
+      requestEntry.matchedForbidden = gatekeeper.forbidden || 'unknown';
       await requestStore.save(requestEntry);
       return res.sendStatus(204);
     }
 
-    // JUDGEMENT 2: CHECK SUPPORTED DEVICE (same behavior)
-    if (foundDevice && activeSupportedList.includes(foundDevice)) {
+    if (matchmaker.inInventory && matchmaker.matchedDevice) {
       const dynamic = DYNAMIC_RESPONSES[responseIndex];
       responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
       requestEntry.status = 'matched';
-      requestEntry.matchedDevice = foundDevice;
+      requestEntry.matchedDevice = matchmaker.matchedDevice;
       requestEntry.outboundResponse = dynamic || CUSTOM_RESPONSE;
       await requestStore.save(requestEntry);
       return res.json({ data: [{ message: dynamic || CUSTOM_RESPONSE }] });
@@ -220,9 +195,11 @@ app.get('/healthz', (req, res) => {
   res.json({
     ok: true,
     provider: providerService.getActiveProvider(),
-    csvUrl: catalog.getCsvUrl(),
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
     newCount: catalog.getNewDevices().length,
     usedCount: catalog.getUsedDevices().length,
+    arrangementCount: Object.keys(catalog.getArrangementMap()).length,
     persistence: firestore ? 'firebase' : 'memory',
   });
 });
@@ -243,8 +220,12 @@ app.get('*', (req, res) => {
     providerService.setActiveProvider(DEFAULT_AI_PROVIDER);
   }
 
-  if (saved.csvUrl) {
-    catalog.setCsvUrl(saved.csvUrl);
+  if (saved.inventoryCsvUrl) {
+    catalog.setInventoryCsvUrl(saved.inventoryCsvUrl);
+  }
+
+  if (saved.arrangementCsvUrl) {
+    catalog.setArrangementCsvUrl(saved.arrangementCsvUrl);
   }
 
   await catalog.loadCatalog();
