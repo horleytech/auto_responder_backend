@@ -2,6 +2,10 @@
   "outputDirectory": "public",
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "http://137.184.239.115:3000/api/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
