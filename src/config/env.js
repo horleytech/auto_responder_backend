@@ -13,6 +13,7 @@ module.exports = {
   GOOGLE_SHEETS_CSV_URL:
     process.env.GOOGLE_SHEETS_CSV_URL ||
     'https://docs.google.com/spreadsheets/d/1Jh7TXif0dsaAVgoExEOCmkACZHPPZqIsiW4hH8T5Pts/export?format=csv',
+  ARRANGEMENT_MAP_CSV_URL: process.env.ARRANGEMENT_MAP_CSV_URL || process.env.GOOGLE_SHEETS_CSV_URL || '',
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || '',
   FIREBASE_SERVICE_ACCOUNT_JSON: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
   PORT: process.env.PORT || 3000,
