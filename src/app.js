@@ -13,24 +13,9 @@ const {
 const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
 const { createProviderService } = require('./services/providerService');
-const { createSettingsStore } = require('./services/settingsStore');
+const settingsStore = require('./services/settingsStore');
 const { createProcessor } = require('./services/processor');
 const { createMaintenanceRouter } = require('./controllers/maintenance');
-
-const DEFAULT_FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-];
-const DEFAULT_FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-];
-const DEFAULT_DYNAMIC_RESPONSES = [
-  'Available', 'Available chief', 'Available big chief', 'Available my Oga', 'Big chief, this is available', 'Available boss',
-  'Available boss, we get am', 'Available my guy', "My Oga, it's available", 'Available boss, make i paste address', 'Available sir!',
-  'E dey o!', 'Available my king!', "Oga at the top, it's available!", 'Available don!', 'My guy, e dey—available!', 'Available, we get am',
-  'Big boss, it’s available!', 'Available legend', 'Abeg Oga, it’s available!', 'Available my brother',
-];
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -39,15 +24,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
-const settingsStore = createSettingsStore(firestore);
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 
 let responseIndex = 0;
-let botLogic = {
-  forbiddenNewPhrases: [...DEFAULT_FORBIDDEN_NEW_PHRASES],
-  forbiddenUsedPhrases: [...DEFAULT_FORBIDDEN_USED_PHRASES],
-  dynamicResponses: [...DEFAULT_DYNAMIC_RESPONSES],
-};
 let runtimeApiKey = process.env.API_KEY || API_KEY;
 
 function sanitizeStringArray(value) {
@@ -64,20 +43,23 @@ function isAuthorized(req) {
   return incoming && incoming === resolveExpectedApiKey();
 }
 
-function getDynamicResponse() {
-  const pool = botLogic.dynamicResponses.length ? botLogic.dynamicResponses : DEFAULT_DYNAMIC_RESPONSES;
+function getDynamicResponse(settings) {
+  const pool = sanitizeStringArray(settings?.dynamicResponses);
   const next = pool[responseIndex % pool.length] || CUSTOM_RESPONSE;
   responseIndex += 1;
   return next;
 }
 
-function buildLayer1Prompt() {
-  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null,"device":string|null}.\nForbidden NEW: ${botLogic.forbiddenNewPhrases.join(', ')}\nForbidden USED: ${botLogic.forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent. device is the likely requested item phrase.`;
+function getSystemPrompt(settings = {}) {
+  const forbiddenNewPhrases = sanitizeStringArray(settings.forbiddenNewPhrases);
+  const forbiddenUsedPhrases = sanitizeStringArray(settings.forbiddenUsedPhrases);
+
+  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null,"device":string|null}.\nForbidden NEW: ${forbiddenNewPhrases.join(', ')}\nForbidden USED: ${forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent. device is the likely requested item phrase.`;
 }
 
-async function runLayer1(provider, senderMessage, overrides = {}) {
+async function runLayer1(provider, senderMessage, settings, overrides = {}) {
   try {
-    const raw = await providerService.runProvider(provider, buildLayer1Prompt(), senderMessage, overrides);
+    const raw = await providerService.runProvider(provider, getSystemPrompt(settings), senderMessage, overrides);
     const parsed = JSON.parse(raw || '{}');
     return {
       category: parsed.category === 'used' ? 'used' : 'new',
@@ -88,14 +70,16 @@ async function runLayer1(provider, senderMessage, overrides = {}) {
   } catch {
     const lower = String(senderMessage || '').toLowerCase();
     const category = lower.includes('used') ? 'used' : 'new';
-    const banned = (category === 'used' ? botLogic.forbiddenUsedPhrases : botLogic.forbiddenNewPhrases).map((x) => x.toLowerCase());
+    const forbiddenNewPhrases = sanitizeStringArray(settings?.forbiddenNewPhrases);
+    const forbiddenUsedPhrases = sanitizeStringArray(settings?.forbiddenUsedPhrases);
+    const banned = (category === 'used' ? forbiddenUsedPhrases : forbiddenNewPhrases).map((x) => x.toLowerCase());
     const forbidden = banned.find((term) => lower.includes(term.toLowerCase()));
     return { category, blocked: Boolean(forbidden), forbidden: forbidden || null, device: null };
   }
 }
 
 app.get('/api/providers', async (req, res) => {
-  const saved = await settingsStore.read();
+  const saved = await settingsStore.getSettings();
   res.json({
     ...providerService.listProviders(),
     activeProvider: saved.activeProvider || providerService.getActiveProvider(),
@@ -109,11 +93,8 @@ app.get('/api/providers', async (req, res) => {
 
 
 app.get('/api/settings', async (req, res) => {
-  const settings = await settingsStore.read();
-  res.json({
-    apiKeyConfigured: Boolean(settings.apiKey || process.env.API_KEY || API_KEY),
-    activeProvider: settings.activeProvider || providerService.getActiveProvider(),
-  });
+  const settings = await settingsStore.getSettings();
+  res.json(settings);
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -121,8 +102,8 @@ app.post('/api/settings', async (req, res) => {
   const nextApiKey = String(req.body?.apiKey || '').trim();
   if (nextApiKey) {
     runtimeApiKey = nextApiKey;
-    await settingsStore.write({ apiKey: nextApiKey });
   }
+  await settingsStore.updateSettings(req.body || {});
   res.json({ success: true });
 });
 app.post('/api/providers', async (req, res) => {
@@ -130,7 +111,7 @@ app.post('/api/providers', async (req, res) => {
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   if (!['chatgpt', 'qwen'].includes(provider)) return res.status(400).json({ error: 'Unsupported provider.' });
   providerService.setActiveProvider(provider);
-  await settingsStore.write({ activeProvider: provider });
+  await settingsStore.updateSettings({ activeProvider: provider });
   res.json({ success: true, activeProvider: provider });
 });
 
@@ -144,12 +125,17 @@ app.post('/api/catalog-source', async (req, res) => {
   catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await settingsStore.write({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+  await settingsStore.updateSettings({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
   return res.json({ success: true, ...loaded });
 });
 
 app.get('/api/bot-logic', async (req, res) => {
-  res.json(botLogic);
+  const settings = await settingsStore.getSettings();
+  res.json({
+    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
+  });
 });
 
 app.post('/api/bot-logic', async (req, res) => {
@@ -162,9 +148,8 @@ app.post('/api/bot-logic', async (req, res) => {
   if (!next.forbiddenNewPhrases.length || !next.forbiddenUsedPhrases.length || !next.dynamicResponses.length) {
     return res.status(400).json({ error: 'All arrays are required.' });
   }
-  botLogic = next;
-  await settingsStore.write(next);
-  return res.json({ success: true, ...botLogic });
+  await settingsStore.updateSettings(next);
+  return res.json({ success: true, ...next });
 });
 
 app.get('/api/dictionary', async (req, res) => {
@@ -209,17 +194,17 @@ app.post('/api/respond', async (req, res) => {
   const authorized = isAuthorized(req);
   if (!authorized) return res.sendStatus(403);
 
-  const settings = await settingsStore.read();
+  const settings = await settingsStore.getSettings();
   const provider = String(req.body?.provider || settings.activeProvider || providerService.getActiveProvider()).toLowerCase();
   const senderMessage = String(req.body?.senderMessage || '').trim();
   if (!senderMessage) return res.status(400).json({ error: 'Missing senderMessage' });
 
-  const layer1 = await runLayer1(provider, senderMessage, {
+  const layer1 = await runLayer1(provider, senderMessage, settings, {
     openAiKey: req.body?.OPENAI_API_KEY,
     qwenKey: req.body?.QWEN_API_KEY,
   });
 
-  const message = layer1.blocked ? '' : getDynamicResponse();
+  const message = layer1.blocked ? '' : getDynamicResponse(settings);
   res.status(200).json({ data: [{ message }], category: layer1.category, blocked: layer1.blocked });
 
   setImmediate(async () => {
@@ -255,31 +240,13 @@ app.get('*', (req, res) => {
 });
 
 (async () => {
-  const settings = await settingsStore.read();
+  const settings = await settingsStore.getSettings();
   runtimeApiKey = settings.apiKey || runtimeApiKey;
   const activeProvider = settings.activeProvider || DEFAULT_AI_PROVIDER;
   providerService.setActiveProvider(activeProvider);
 
   catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
   catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
-
-  const nextBotLogic = {
-    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
-    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
-  };
-
-  botLogic = {
-    forbiddenNewPhrases: nextBotLogic.forbiddenNewPhrases.length ? nextBotLogic.forbiddenNewPhrases : [...DEFAULT_FORBIDDEN_NEW_PHRASES],
-    forbiddenUsedPhrases: nextBotLogic.forbiddenUsedPhrases.length ? nextBotLogic.forbiddenUsedPhrases : [...DEFAULT_FORBIDDEN_USED_PHRASES],
-    dynamicResponses: nextBotLogic.dynamicResponses.length ? nextBotLogic.dynamicResponses : [...DEFAULT_DYNAMIC_RESPONSES],
-  };
-
-  await settingsStore.write({
-    forbiddenNewPhrases: botLogic.forbiddenNewPhrases,
-    forbiddenUsedPhrases: botLogic.forbiddenUsedPhrases,
-    dynamicResponses: botLogic.dynamicResponses,
-  });
 
   await catalog.loadCatalog();
 })();
