@@ -1,4 +1,4 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE = 'http://137.184.239.115:3000';
 
 function withBase(url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
