@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const {
   API_KEY,
   OPENAI_API_KEY,
@@ -15,7 +16,7 @@ const { createSettingsStore } = require('./services/settingsStore');
 
 const app = express();
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, '../public')));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 if (!API_KEY || (!OPENAI_API_KEY && !QWEN_API_KEY)) {
@@ -224,6 +225,14 @@ app.get('/healthz', (req, res) => {
     usedCount: catalog.getUsedDevices().length,
     persistence: firestore ? 'firebase' : 'memory',
   });
+});
+
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API route not found' });
+  }
+
+  return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 (async () => {
