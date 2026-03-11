@@ -1,8 +1,9 @@
-import { Moon, Sun } from 'lucide-react';
+import { House, Moon, Sun } from 'lucide-react';
 
 const navItems = [
   { id: 'analytics', label: 'Analytics' },
   { id: 'requests', label: 'Requests' },
+  { id: 'bot-logic', label: 'Bot Logic' },
   { id: 'settings', label: 'Configuration' },
 ];
 
@@ -15,6 +16,16 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
             <h1 className="text-lg font-semibold">Auto Responder</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">Premium Control Center</p>
           </div>
+
+          <a
+            className="mb-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white"
+            href="https://scrapebot.horleytech.com/hub"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <House size={16} /> Home Hub
+          </a>
+
           <nav className="space-y-2">
             {navItems.map((item) => (
               <button
@@ -30,6 +41,7 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
               </button>
             ))}
           </nav>
+
           <button
             className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
             onClick={onToggleTheme}
@@ -37,6 +49,7 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
             {darkMode ? <Sun size={16} /> : <Moon size={16} />} {darkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
         </aside>
+
         <main className="flex-1">{children}</main>
       </div>
     </div>

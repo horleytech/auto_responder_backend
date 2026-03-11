@@ -8,21 +8,44 @@ const {
   DEFAULT_AI_PROVIDER,
 } = require('../config/env');
 
+function resolveKeys(overrides = {}) {
+  const envOpenAi = process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY;
+  const envQwen = process.env.QWEN_API_KEY || QWEN_API_KEY;
+
+  return {
+    openAiKey: String(overrides.openAiKey || '').trim() || envOpenAi,
+    qwenKey: String(overrides.qwenKey || '').trim() || envQwen,
+  };
+}
+
 function createProviderService() {
   let activeProvider = DEFAULT_AI_PROVIDER;
 
-  const clients = {
-    chatgpt: OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null,
-    qwen: QWEN_API_KEY ? new OpenAI({ apiKey: QWEN_API_KEY, baseURL: QWEN_BASE_URL }) : null,
-  };
+  function getClient(provider, overrides = {}) {
+    const { openAiKey, qwenKey } = resolveKeys(overrides);
+
+    if (provider === 'chatgpt') {
+      return openAiKey ? new OpenAI({ apiKey: openAiKey }) : null;
+    }
+
+    if (provider === 'qwen') {
+      return qwenKey ? new OpenAI({ apiKey: qwenKey, baseURL: QWEN_BASE_URL }) : null;
+    }
+
+    return null;
+  }
 
   function listProviders() {
     return {
       activeProvider,
       providers: [
-        { name: 'chatgpt', model: CHATGPT_MODEL, configured: Boolean(clients.chatgpt) },
-        { name: 'qwen', model: QWEN_MODEL, configured: Boolean(clients.qwen) },
+        { name: 'chatgpt', model: CHATGPT_MODEL, configured: Boolean(resolveKeys().openAiKey) },
+        { name: 'qwen', model: QWEN_MODEL, configured: Boolean(resolveKeys().qwenKey) },
       ],
+      envKeysLoaded: {
+        OPENAI_API_KEY: Boolean(resolveKeys().openAiKey),
+        QWEN_API_KEY: Boolean(resolveKeys().qwenKey),
+      },
     };
   }
 
@@ -30,8 +53,8 @@ function createProviderService() {
     activeProvider = provider;
   }
 
-  async function runProvider(provider, systemPrompt, userMessage) {
-    const client = clients[provider];
+  async function runProvider(provider, systemPrompt, userMessage, overrides = {}) {
+    const client = getClient(provider, overrides);
     if (!client) throw new Error(`Provider not configured: ${provider}`);
 
     const model = provider === 'qwen' ? QWEN_MODEL : CHATGPT_MODEL;
@@ -48,8 +71,8 @@ function createProviderService() {
     return completion.choices?.[0]?.message?.content || '{}';
   }
 
-  async function runJson(provider, systemPrompt, userMessage) {
-    const raw = await runProvider(provider, systemPrompt, userMessage);
+  async function runJson(provider, systemPrompt, userMessage, overrides = {}) {
+    const raw = await runProvider(provider, systemPrompt, userMessage, overrides);
     try {
       return JSON.parse(raw);
     } catch {
@@ -82,8 +105,9 @@ Rules:
 `.trim();
   }
 
-  async function runTwoLayerCheck({ provider, userMessage, newForbidden, usedForbidden, catalog }) {
-    const gatekeeper = await runJson(provider, buildGatekeeperPrompt(newForbidden, usedForbidden), userMessage);
+  async function runTwoLayerCheck({ provider, userMessage, newForbidden, usedForbidden, catalog, gatekeeperPrompt, overrides = {} }) {
+    const prompt = gatekeeperPrompt || buildGatekeeperPrompt(newForbidden, usedForbidden);
+    const gatekeeper = await runJson(provider, prompt, userMessage, overrides);
 
     if (!gatekeeper.intentItem || !gatekeeper.isApproved) {
       return {

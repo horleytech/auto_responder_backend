@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from './components/DashboardLayout';
 import AnalyticsPage from './pages/AnalyticsPage';
+import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import { fetchJsonSafe } from './lib/api';
@@ -11,6 +12,7 @@ export default function App() {
   const [apiKey, setApiKey] = useState('');
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
+  const [envKeysLoaded, setEnvKeysLoaded] = useState({ API_KEY: false, OPENAI_API_KEY: false, QWEN_API_KEY: false });
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -24,6 +26,7 @@ export default function App() {
           activeProvider: providersResult.data.activeProvider,
           providers: providersResult.data.providers || [],
         });
+        setEnvKeysLoaded(providersResult.data.envKeysLoaded || { API_KEY: false, OPENAI_API_KEY: false, QWEN_API_KEY: false });
       }
 
       const catalogResult = await fetchJsonSafe('/api/catalog-source');
@@ -40,6 +43,7 @@ export default function App() {
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
       {activePage === 'analytics' && <AnalyticsPage />}
       {activePage === 'requests' && <RequestsPage />}
+      {activePage === 'bot-logic' && <BotLogicPage apiKey={apiKey} />}
       {activePage === 'settings' && (
         <SettingsPage
           apiKey={apiKey}
@@ -48,6 +52,7 @@ export default function App() {
           setProviderState={setProviderState}
           catalogState={catalogState}
           setCatalogState={setCatalogState}
+          envKeysLoaded={envKeysLoaded}
         />
       )}
     </DashboardLayout>

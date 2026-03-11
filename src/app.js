@@ -15,27 +15,17 @@ const { createProviderService } = require('./services/providerService');
 const { createRequestStore } = require('./services/requestStore');
 const { createSettingsStore } = require('./services/settingsStore');
 
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '../public')));
-app.get('/favicon.ico', (req, res) => res.status(204).end());
-
-if (!API_KEY || (!OPENAI_API_KEY && !QWEN_API_KEY)) {
-  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one provider key.');
-  process.exit(1);
-}
-
-const FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'any iphone lower than iphone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iphone 8', 'iphone 7', 'charging port', 'icloud', 'panel', 'nfid', 'uk', 'air', 'used',
+const DEFAULT_FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
 ];
 
-const FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'any iphone lower than iphone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iphone 8', 'iphone 7', 'charging port', 'icloud', 'panel', 'nfid', 'new',
+const DEFAULT_FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
 ];
 
-const DYNAMIC_RESPONSES = [
+const DEFAULT_DYNAMIC_RESPONSES = [
   'Available', 'Available chief', 'Available big chief', 'Available my Oga',
   'Big chief, this is available', 'Available boss', 'Available boss, we get am',
   'Available my guy', "My Oga, it's available", 'Available boss, make i paste address',
@@ -44,7 +34,27 @@ const DYNAMIC_RESPONSES = [
   'Big boss, it’s available!', 'Available legend', 'Abeg Oga, it’s available!',
   'Available my brother',
 ];
+
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '../public')));
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+const envApiKey = process.env.API_KEY || API_KEY;
+const envOpenAi = process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY;
+const envQwen = process.env.QWEN_API_KEY || QWEN_API_KEY;
+
+if (!envApiKey || (!envOpenAi && !envQwen)) {
+  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one provider key.');
+  process.exit(1);
+}
+
 let responseIndex = 0;
+let botLogic = {
+  forbiddenNewPhrases: [...DEFAULT_FORBIDDEN_NEW_PHRASES],
+  forbiddenUsedPhrases: [...DEFAULT_FORBIDDEN_USED_PHRASES],
+  dynamicResponses: [...DEFAULT_DYNAMIC_RESPONSES],
+};
 
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
@@ -52,12 +62,50 @@ const requestStore = createRequestStore(firestore);
 const settingsStore = createSettingsStore(firestore);
 
 function isAuthorized(req) {
-  return req.headers['x-api-key'] === API_KEY;
+  return req.headers['x-api-key'] === (process.env.API_KEY || API_KEY);
+}
+
+function sanitizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v || '').trim()).filter(Boolean);
+}
+
+function getSystemPrompt() {
+  const newForbidden = botLogic.forbiddenNewPhrases;
+  const usedForbidden = botLogic.forbiddenUsedPhrases;
+
+  return `
+You are the Gatekeeper for an inventory checker.
+Analyze the user message and return ONLY a JSON object.
+
+Return format:
+{
+  "category": "new" | "used",
+  "intentItem": string | null,
+  "forbidden": string | null,
+  "isApproved": boolean,
+  "reason": string
+}
+
+Rules:
+1) Category is "used" if user explicitly indicates used/uk used/second hand; otherwise "new".
+2) Forbidden list for NEW: ${newForbidden.join(', ')}
+3) Forbidden list for USED: ${usedForbidden.join(', ')}
+4) "esim" is forbidden ONLY when "physical" or "physical sim" is absent.
+5) intentItem should be the primary requested device phrase as written by user.
+6) If forbidden is detected, isApproved must be false.
+7) Return strict JSON only.
+`.trim();
 }
 
 app.get('/api/providers', (req, res) => {
   return res.json({
     ...providerService.listProviders(),
+    envKeysLoaded: {
+      API_KEY: Boolean(process.env.API_KEY || API_KEY),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
+      QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
+    },
     persistence: firestore ? 'firebase' : 'memory',
   });
 });
@@ -115,6 +163,28 @@ app.post('/api/reload-catalog', async (req, res) => {
   return res.json({ ...result, persistence: firestore ? 'firebase' : 'memory' });
 });
 
+app.get('/api/bot-logic', (req, res) => {
+  res.json({ ...botLogic, persistence: firestore ? 'firebase' : 'memory' });
+});
+
+app.post('/api/bot-logic', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+
+  const next = {
+    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
+  };
+
+  if (!next.forbiddenNewPhrases.length || !next.forbiddenUsedPhrases.length || !next.dynamicResponses.length) {
+    return res.status(400).json({ error: 'All bot logic arrays must contain at least one value.' });
+  }
+
+  botLogic = next;
+  await settingsStore.write(next);
+  return res.json({ success: true, ...botLogic, persistence: firestore ? 'firebase' : 'memory' });
+});
+
 app.get('/api/requests', async (req, res) => {
   const requests = await requestStore.list();
   res.json({ count: requests.length, requests, persistence: firestore ? 'firebase' : 'memory' });
@@ -155,9 +225,14 @@ app.post('/api/respond', async (req, res) => {
     const { gatekeeper, matchmaker } = await providerService.runTwoLayerCheck({
       provider,
       userMessage,
-      newForbidden: FORBIDDEN_NEW_PHRASES,
-      usedForbidden: FORBIDDEN_USED_PHRASES,
+      newForbidden: botLogic.forbiddenNewPhrases,
+      usedForbidden: botLogic.forbiddenUsedPhrases,
+      gatekeeperPrompt: getSystemPrompt(),
       catalog,
+      overrides: {
+        openAiKey: req.body?.OPENAI_API_KEY,
+        qwenKey: req.body?.QWEN_API_KEY,
+      },
     });
 
     requestEntry.gatekeeper = gatekeeper;
@@ -171,8 +246,9 @@ app.post('/api/respond', async (req, res) => {
     }
 
     if (matchmaker.inInventory && matchmaker.matchedDevice) {
-      const dynamic = DYNAMIC_RESPONSES[responseIndex];
-      responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
+      const responsePool = botLogic.dynamicResponses.length ? botLogic.dynamicResponses : DEFAULT_DYNAMIC_RESPONSES;
+      const dynamic = responsePool[responseIndex % responsePool.length];
+      responseIndex += 1;
       requestEntry.status = 'matched';
       requestEntry.matchedDevice = matchmaker.matchedDevice;
       requestEntry.outboundResponse = dynamic || CUSTOM_RESPONSE;
@@ -214,18 +290,28 @@ app.get('*', (req, res) => {
 
 (async () => {
   const saved = await settingsStore.read();
+
   if (saved.activeProvider && ['chatgpt', 'qwen'].includes(saved.activeProvider)) {
     providerService.setActiveProvider(saved.activeProvider);
   } else {
     providerService.setActiveProvider(DEFAULT_AI_PROVIDER);
   }
 
-  if (saved.inventoryCsvUrl) {
-    catalog.setInventoryCsvUrl(saved.inventoryCsvUrl);
-  }
+  if (saved.inventoryCsvUrl) catalog.setInventoryCsvUrl(saved.inventoryCsvUrl);
+  if (saved.arrangementCsvUrl) catalog.setArrangementCsvUrl(saved.arrangementCsvUrl);
 
-  if (saved.arrangementCsvUrl) {
-    catalog.setArrangementCsvUrl(saved.arrangementCsvUrl);
+  const existingForbiddenNew = sanitizeStringArray(saved.forbiddenNewPhrases);
+  const existingForbiddenUsed = sanitizeStringArray(saved.forbiddenUsedPhrases);
+  const existingDynamicResponses = sanitizeStringArray(saved.dynamicResponses);
+
+  botLogic = {
+    forbiddenNewPhrases: existingForbiddenNew.length ? existingForbiddenNew : [...DEFAULT_FORBIDDEN_NEW_PHRASES],
+    forbiddenUsedPhrases: existingForbiddenUsed.length ? existingForbiddenUsed : [...DEFAULT_FORBIDDEN_USED_PHRASES],
+    dynamicResponses: existingDynamicResponses.length ? existingDynamicResponses : [...DEFAULT_DYNAMIC_RESPONSES],
+  };
+
+  if (!existingForbiddenNew.length || !existingForbiddenUsed.length || !existingDynamicResponses.length) {
+    await settingsStore.write(botLogic);
   }
 
   await catalog.loadCatalog();
