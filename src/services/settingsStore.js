@@ -1,13 +1,18 @@
-function createSettingsStore(firestore) {
+const { firestore } = require('./firebaseService');
+
+function createSettingsStore(db) {
   const memory = {
     activeProvider: null,
     inventoryCsvUrl: null,
     arrangementCsvUrl: null,
+    forbiddenNewPhrases: [],
+    forbiddenUsedPhrases: [],
+    dynamicResponses: [],
   };
 
-  const docRef = firestore ? firestore.collection('ar_settings').doc('config') : null;
+  const docRef = db ? db.collection('ar_settings').doc('config') : null;
 
-  async function read() {
+  async function getSettings() {
     if (!docRef) return { ...memory };
     try {
       const snap = await docRef.get();
@@ -19,17 +24,27 @@ function createSettingsStore(firestore) {
     }
   }
 
-  async function write(partial) {
-    Object.assign(memory, partial);
+  async function updateSettings(partial) {
+    Object.assign(memory, partial || {});
     if (!docRef) return;
     try {
-      await docRef.set({ ...partial, updatedAt: new Date().toISOString() }, { merge: true });
+      await docRef.set({ ...(partial || {}), updatedAt: new Date().toISOString() }, { merge: true });
     } catch (err) {
       console.error('⚠️ Failed to save settings to Firebase:', err.message);
     }
   }
 
-  return { read, write };
+  return {
+    getSettings,
+    updateSettings,
+    read: getSettings,
+    write: updateSettings,
+  };
 }
 
-module.exports = { createSettingsStore };
+const defaultSettingsStore = createSettingsStore(firestore);
+
+module.exports = {
+  ...defaultSettingsStore,
+  createSettingsStore,
+};
