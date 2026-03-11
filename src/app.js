@@ -173,6 +173,19 @@ app.delete('/api/dictionary/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/api/requests', async (req, res) => {
+  if (!firestore) return res.json({ requests: [] });
+
+  const snap = await firestore
+    .collection('ar_raw_requests')
+    .orderBy('timestamp', 'desc')
+    .limit(50)
+    .get();
+
+  const requests = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  res.json({ requests });
+});
+
 app.get('/api/clean-analytics', async (req, res) => {
   const timeframe = String(req.query.timeframe || '1m').toLowerCase();
   const now = Date.now();
@@ -198,6 +211,7 @@ app.post('/api/respond', async (req, res) => {
   const provider = String(req.body?.provider || settings.activeProvider || providerService.getActiveProvider()).toLowerCase();
   const senderMessage = String(req.body?.senderMessage || '').trim();
   if (!senderMessage) return res.status(400).json({ error: 'Missing senderMessage' });
+  console.log('📥 Incoming WhatsApp Webhook:', senderMessage);
 
   const layer1 = await runLayer1(provider, senderMessage, settings, {
     openAiKey: req.body?.OPENAI_API_KEY,
@@ -205,6 +219,7 @@ app.post('/api/respond', async (req, res) => {
   });
 
   const message = layer1.blocked ? '' : getDynamicResponse(settings);
+  console.log('📤 AI Response:', message, '| Category:', layer1.category);
   res.status(200).json({ data: [{ message }], category: layer1.category, blocked: layer1.blocked });
 
   setImmediate(async () => {
