@@ -72,7 +72,7 @@ function getDynamicResponse() {
 }
 
 function buildLayer1Prompt() {
-  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null}.\nForbidden NEW: ${botLogic.forbiddenNewPhrases.join(', ')}\nForbidden USED: ${botLogic.forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent.`;
+  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null,"device":string|null}.\nForbidden NEW: ${botLogic.forbiddenNewPhrases.join(', ')}\nForbidden USED: ${botLogic.forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent. device is the likely requested item phrase.`;
 }
 
 async function runLayer1(provider, senderMessage, overrides = {}) {
@@ -83,13 +83,14 @@ async function runLayer1(provider, senderMessage, overrides = {}) {
       category: parsed.category === 'used' ? 'used' : 'new',
       blocked: Boolean(parsed.blocked),
       forbidden: parsed.forbidden || null,
+      device: parsed.device || null,
     };
   } catch {
     const lower = String(senderMessage || '').toLowerCase();
     const category = lower.includes('used') ? 'used' : 'new';
     const banned = (category === 'used' ? botLogic.forbiddenUsedPhrases : botLogic.forbiddenNewPhrases).map((x) => x.toLowerCase());
     const forbidden = banned.find((term) => lower.includes(term.toLowerCase()));
-    return { category, blocked: Boolean(forbidden), forbidden: forbidden || null };
+    return { category, blocked: Boolean(forbidden), forbidden: forbidden || null, device: null };
   }
 }
 
@@ -227,6 +228,7 @@ app.post('/api/respond', async (req, res) => {
         senderId: req.body?.senderId || 'Unknown',
         senderMessage,
         aiCategory: layer1.category,
+        aiDeviceMatch: layer1.device || null,
         timestamp: Date.now(),
         processed: false,
       });
