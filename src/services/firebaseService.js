@@ -31,5 +31,7 @@ function initFirestore() {
 }
 
 module.exports = {
+  admin,
   firestore: initFirestore(),
+  FieldValue: admin.firestore.FieldValue,
 };
