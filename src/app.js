@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const path = require('path');
 const {
   API_KEY,
@@ -7,245 +8,278 @@ const {
   CUSTOM_RESPONSE,
   DEFAULT_AI_PROVIDER,
   GOOGLE_SHEETS_CSV_URL,
+  ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
-const { firestore } = require('./services/firebaseService');
+const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
 const { createProviderService } = require('./services/providerService');
-const { createRequestStore } = require('./services/requestStore');
 const { createSettingsStore } = require('./services/settingsStore');
+const { createProcessor } = require('./services/processor');
+const { createMaintenanceRouter } = require('./controllers/maintenance');
 
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '../public')));
-app.get('/favicon.ico', (req, res) => res.status(204).end());
-
-if (!API_KEY || (!OPENAI_API_KEY && !QWEN_API_KEY)) {
-  console.error('❌ Missing API_KEY or provider key(s). Set API_KEY and at least one of OPENAI_CHATGPT / QWEN_API_KEY.');
-  process.exit(1);
-}
-
-const FORBIDDEN_NEW_PHRASES = [
+const DEFAULT_FORBIDDEN_NEW_PHRASES = [
   'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
   'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-].map((p) => p.toLowerCase());
-
-const FORBIDDEN_USED_PHRASES = [
+];
+const DEFAULT_FORBIDDEN_USED_PHRASES = [
   'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
   'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-].map((p) => p.toLowerCase());
-
-const DYNAMIC_RESPONSES = [
-  'Available', 'Available chief', 'Available big chief', 'Available my Oga',
-  'Big chief, this is available', 'Available boss', 'Available boss, we get am',
-  'Available my guy', "My Oga, it's available", 'Available boss, make i paste address',
-  'Available sir!', 'E dey o!', 'Available my king!', "Oga at the top, it's available!",
-  'Available don!', 'My guy, e dey—available!', 'Available, we get am',
-  'Big boss, it’s available!', 'Available legend', 'Abeg Oga, it’s available!',
-  'Available my brother',
 ];
-let responseIndex = 0;
+const DEFAULT_DYNAMIC_RESPONSES = [
+  'Available', 'Available chief', 'Available big chief', 'Available my Oga', 'Big chief, this is available', 'Available boss',
+  'Available boss, we get am', 'Available my guy', "My Oga, it's available", 'Available boss, make i paste address', 'Available sir!',
+  'E dey o!', 'Available my king!', "Oga at the top, it's available!", 'Available don!', 'My guy, e dey—available!', 'Available, we get am',
+  'Big boss, it’s available!', 'Available legend', 'Abeg Oga, it’s available!', 'Available my brother',
+];
 
-const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL);
+const app = express();
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, '../public')));
+
+const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
-const requestStore = createRequestStore(firestore);
 const settingsStore = createSettingsStore(firestore);
+const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
+
+let responseIndex = 0;
+let botLogic = {
+  forbiddenNewPhrases: [...DEFAULT_FORBIDDEN_NEW_PHRASES],
+  forbiddenUsedPhrases: [...DEFAULT_FORBIDDEN_USED_PHRASES],
+  dynamicResponses: [...DEFAULT_DYNAMIC_RESPONSES],
+};
+let runtimeApiKey = process.env.API_KEY || API_KEY;
+
+function sanitizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v || '').trim()).filter(Boolean);
+}
+
+function resolveExpectedApiKey() {
+  return process.env.API_KEY || runtimeApiKey || API_KEY;
+}
 
 function isAuthorized(req) {
-  return req.headers['x-api-key'] === API_KEY;
+  const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
+  return incoming && incoming === resolveExpectedApiKey();
 }
 
-function getSystemPrompt() {
-  return `
-You are a JSON-based entity extractor for an availability checker.
-Your SOLE purpose is to analyze the user's message and return a JSON object.
-Do not add any other text, conversation, or explanations.
-
-First, determine the category: 'new' or 'used'. If the message contains 'used', the category is 'used'. Otherwise, default to 'new'.
-
-Based on the category, use the appropriate lists:
-
-List of NEW devices: ${catalog.getNewDevices().join(', ')}
-List of NEW forbidden phrases: ${FORBIDDEN_NEW_PHRASES.join(', ')}
-
-List of USED devices: ${catalog.getUsedDevices().join(', ')}
-List of USED forbidden phrases: ${FORBIDDEN_USED_PHRASES.join(', ')}
-
-Return JSON in this exact format:
-{"device": string | null, "forbidden": string | null, "category": "new" | "used"}
-
-RULES:
-1.  "device": Find the *first* item from the active device list that is the *closest match* to the user's request. The string you return MUST be spelled *exactly* as it appears in the list.
-2.  "forbidden": Find the *first* matching forbidden phrase from the active list. The string MUST be spelled *exactly* as it appears in the list. If no forbidden phrase is found, this MUST be null.
-3.  "category": The category you detected ('new' or 'used').
-4.  **PRIORITY:** A message can have BOTH a device and a forbidden phrase. Find both.
-5.  ***"esim" EXCEPTION:*** The phrase "esim" is only forbidden if the message does *not* also mention "physical". If the message contains "physical" (or "physical sim") AND "esim", it is considered "physical" and "esim" should *not* be listed as forbidden.
-`.trim();
+function getDynamicResponse() {
+  const pool = botLogic.dynamicResponses.length ? botLogic.dynamicResponses : DEFAULT_DYNAMIC_RESPONSES;
+  const next = pool[responseIndex % pool.length] || CUSTOM_RESPONSE;
+  responseIndex += 1;
+  return next;
 }
 
-app.get('/api/providers', (req, res) => {
-  return res.json({
+function buildLayer1Prompt() {
+  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null,"device":string|null}.\nForbidden NEW: ${botLogic.forbiddenNewPhrases.join(', ')}\nForbidden USED: ${botLogic.forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent. device is the likely requested item phrase.`;
+}
+
+async function runLayer1(provider, senderMessage, overrides = {}) {
+  try {
+    const raw = await providerService.runProvider(provider, buildLayer1Prompt(), senderMessage, overrides);
+    const parsed = JSON.parse(raw || '{}');
+    return {
+      category: parsed.category === 'used' ? 'used' : 'new',
+      blocked: Boolean(parsed.blocked),
+      forbidden: parsed.forbidden || null,
+      device: parsed.device || null,
+    };
+  } catch {
+    const lower = String(senderMessage || '').toLowerCase();
+    const category = lower.includes('used') ? 'used' : 'new';
+    const banned = (category === 'used' ? botLogic.forbiddenUsedPhrases : botLogic.forbiddenNewPhrases).map((x) => x.toLowerCase());
+    const forbidden = banned.find((term) => lower.includes(term.toLowerCase()));
+    return { category, blocked: Boolean(forbidden), forbidden: forbidden || null, device: null };
+  }
+}
+
+app.get('/api/providers', async (req, res) => {
+  const saved = await settingsStore.read();
+  res.json({
     ...providerService.listProviders(),
-    persistence: firestore ? 'firebase' : 'memory',
+    activeProvider: saved.activeProvider || providerService.getActiveProvider(),
+    envKeysLoaded: {
+      API_KEY: Boolean(process.env.API_KEY),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
+      QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
+    },
   });
 });
 
+
+app.get('/api/settings', async (req, res) => {
+  const settings = await settingsStore.read();
+  res.json({
+    apiKeyConfigured: Boolean(settings.apiKey || process.env.API_KEY || API_KEY),
+    activeProvider: settings.activeProvider || providerService.getActiveProvider(),
+  });
+});
+
+app.post('/api/settings', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  const nextApiKey = String(req.body?.apiKey || '').trim();
+  if (nextApiKey) {
+    runtimeApiKey = nextApiKey;
+    await settingsStore.write({ apiKey: nextApiKey });
+  }
+  res.json({ success: true });
+});
 app.post('/api/providers', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
-
   const provider = String(req.body?.provider || '').toLowerCase().trim();
-  if (!['chatgpt', 'qwen'].includes(provider)) {
-    return res.status(400).json({ error: 'Unsupported provider. Use chatgpt or qwen.' });
-  }
-
+  if (!['chatgpt', 'qwen'].includes(provider)) return res.status(400).json({ error: 'Unsupported provider.' });
   providerService.setActiveProvider(provider);
   await settingsStore.write({ activeProvider: provider });
-  return res.json({
-    ...providerService.listProviders(),
-    persistence: firestore ? 'firebase' : 'memory',
-  });
+  res.json({ success: true, activeProvider: provider });
 });
 
 app.get('/api/catalog-source', (req, res) => {
-  res.json({
-    csvUrl: catalog.getCsvUrl(),
-    newCount: catalog.getNewDevices().length,
-    usedCount: catalog.getUsedDevices().length,
-    persistence: firestore ? 'firebase' : 'memory',
-  });
+  res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
 });
 
 app.post('/api/catalog-source', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
-
-  const nextUrl = String(req.body?.csvUrl || '').trim();
-  if (!nextUrl) return res.status(400).json({ error: 'Missing csvUrl' });
-
-  catalog.setCsvUrl(nextUrl);
-  const result = await catalog.loadCatalog();
-  if (!result.success) return res.status(400).json(result);
-
-  await settingsStore.write({ csvUrl: nextUrl });
-  return res.json({ csvUrl: catalog.getCsvUrl(), ...result, persistence: firestore ? 'firebase' : 'memory' });
+  catalog.setInventoryCsvUrl(String(req.body?.inventoryCsvUrl || '').trim());
+  catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
+  const loaded = await catalog.loadCatalog();
+  if (!loaded.success) return res.status(400).json(loaded);
+  await settingsStore.write({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+  return res.json({ success: true, ...loaded });
 });
 
-app.post('/api/reload-catalog', async (req, res) => {
+app.get('/api/bot-logic', async (req, res) => {
+  res.json(botLogic);
+});
+
+app.post('/api/bot-logic', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
-  const result = await catalog.loadCatalog();
-  if (!result.success) return res.status(500).json(result);
-  return res.json({ ...result, persistence: firestore ? 'firebase' : 'memory' });
+  const next = {
+    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
+  };
+  if (!next.forbiddenNewPhrases.length || !next.forbiddenUsedPhrases.length || !next.dynamicResponses.length) {
+    return res.status(400).json({ error: 'All arrays are required.' });
+  }
+  botLogic = next;
+  await settingsStore.write(next);
+  return res.json({ success: true, ...botLogic });
 });
 
-app.get('/api/requests', async (req, res) => {
-  const requests = await requestStore.list();
-  res.json({ count: requests.length, requests, persistence: firestore ? 'firebase' : 'memory' });
+app.get('/api/dictionary', async (req, res) => {
+  const rows = await processor.listDictionary();
+  res.json({ dictionary: rows });
 });
 
-app.get('/api/grouped-requests', async (req, res) => {
-  const grouped = await requestStore.grouped(30);
-  res.json({ count: grouped.length, grouped, persistence: firestore ? 'firebase' : 'memory' });
+app.post('/api/dictionary', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  try {
+    await processor.upsertDictionary(req.body || {});
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/dictionary/:id', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  await processor.deleteDictionary(req.params.id);
+  res.json({ success: true });
+});
+
+app.get('/api/clean-analytics', async (req, res) => {
+  const timeframe = String(req.query.timeframe || '1m').toLowerCase();
+  const now = Date.now();
+  const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
+
+  let devices = [];
+  let customers = [];
+
+  if (firestore) {
+    const [aSnap, cSnap] = await Promise.all([firestore.collection('ar_analytics').orderBy('requestCount', 'desc').get(), firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get()]);
+    devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
+    customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
+  }
+
+  res.json({ devices, customers, timeframe });
 });
 
 app.post('/api/respond', async (req, res) => {
-  // Keep original core behavior from your backend:
-  // - strict x-api-key auth
-  // - AI JSON extraction
-  // - forbidden => 204, supported device => dynamic response, else 204
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  const authorized = isAuthorized(req);
+  if (!authorized) return res.sendStatus(403);
 
-  const userMessage = req.body?.senderMessage;
-  if (!userMessage) return res.status(400).json({ error: 'Missing senderMessage' });
+  const settings = await settingsStore.read();
+  const provider = String(req.body?.provider || settings.activeProvider || providerService.getActiveProvider()).toLowerCase();
+  const senderMessage = String(req.body?.senderMessage || '').trim();
+  if (!senderMessage) return res.status(400).json({ error: 'Missing senderMessage' });
 
-  const provider = String(req.body?.provider || providerService.getActiveProvider()).toLowerCase();
-  const requestEntry = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    time: new Date().toISOString(),
-    provider,
-    senderMessage: userMessage,
-    status: 'received',
-  };
+  const layer1 = await runLayer1(provider, senderMessage, {
+    openAiKey: req.body?.OPENAI_API_KEY,
+    qwenKey: req.body?.QWEN_API_KEY,
+  });
 
-  try {
-    const raw = await providerService.runProvider(provider, getSystemPrompt(), userMessage);
-    let aiResponse;
+  const message = layer1.blocked ? '' : getDynamicResponse();
+  res.status(200).json({ data: [{ message }], category: layer1.category, blocked: layer1.blocked });
+
+  setImmediate(async () => {
     try {
-      aiResponse = JSON.parse(raw);
-    } catch {
-      requestEntry.status = 'failed';
-      requestEntry.error = 'AI response was not valid JSON';
-      requestEntry.rawReply = raw;
-      await requestStore.save(requestEntry);
-      return res.status(500).json({ error: 'AI response was not valid JSON' });
+      await processor.saveRawRequest({
+        senderId: req.body?.senderId || 'Unknown',
+        senderMessage,
+        aiCategory: layer1.category,
+        aiDeviceMatch: layer1.device || null,
+        timestamp: Date.now(),
+        processed: false,
+      });
+    } catch (err) {
+      console.error('Failed to save raw request:', err.message);
     }
-
-    const category = aiResponse.category;
-    const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
-    const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
-
-    const activeSupportedList = category === 'used' ? catalog.getUsedDevices() : catalog.getNewDevices();
-    const activeForbiddenList = category === 'used' ? FORBIDDEN_USED_PHRASES : FORBIDDEN_NEW_PHRASES;
-
-    requestEntry.rawReply = aiResponse;
-
-    // JUDGEMENT 1: CHECK FORBIDDEN (same behavior)
-    if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
-      requestEntry.status = 'blocked_forbidden';
-      requestEntry.matchedForbidden = foundForbidden;
-      await requestStore.save(requestEntry);
-      return res.sendStatus(204);
-    }
-
-    // JUDGEMENT 2: CHECK SUPPORTED DEVICE (same behavior)
-    if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      const dynamic = DYNAMIC_RESPONSES[responseIndex];
-      responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
-      requestEntry.status = 'matched';
-      requestEntry.matchedDevice = foundDevice;
-      requestEntry.outboundResponse = dynamic || CUSTOM_RESPONSE;
-      await requestStore.save(requestEntry);
-      return res.json({ data: [{ message: dynamic || CUSTOM_RESPONSE }] });
-    }
-
-    requestEntry.status = 'no_match';
-    await requestStore.save(requestEntry);
-    return res.sendStatus(204);
-  } catch (err) {
-    requestEntry.status = 'failed';
-    requestEntry.error = err.message;
-    await requestStore.save(requestEntry);
-    return res.status(500).json({ error: 'Server error', details: err.message });
-  }
-});
-
-app.get('/healthz', (req, res) => {
-  res.json({
-    ok: true,
-    provider: providerService.getActiveProvider(),
-    csvUrl: catalog.getCsvUrl(),
-    newCount: catalog.getNewDevices().length,
-    usedCount: catalog.getUsedDevices().length,
-    persistence: firestore ? 'firebase' : 'memory',
   });
 });
 
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ error: 'API route not found' });
-  }
+app.use('/api/maintenance', createMaintenanceRouter({
+  firestore,
+  processor,
+  settingsStore,
+  resolveApiKey: resolveExpectedApiKey,
+}));
 
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' });
+});
+
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API route not found' });
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 (async () => {
-  const saved = await settingsStore.read();
-  if (saved.activeProvider && ['chatgpt', 'qwen'].includes(saved.activeProvider)) {
-    providerService.setActiveProvider(saved.activeProvider);
-  } else {
-    providerService.setActiveProvider(DEFAULT_AI_PROVIDER);
-  }
+  const settings = await settingsStore.read();
+  runtimeApiKey = settings.apiKey || runtimeApiKey;
+  const activeProvider = settings.activeProvider || DEFAULT_AI_PROVIDER;
+  providerService.setActiveProvider(activeProvider);
 
-  if (saved.csvUrl) {
-    catalog.setCsvUrl(saved.csvUrl);
-  }
+  catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
+  catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
+
+  const nextBotLogic = {
+    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
+  };
+
+  botLogic = {
+    forbiddenNewPhrases: nextBotLogic.forbiddenNewPhrases.length ? nextBotLogic.forbiddenNewPhrases : [...DEFAULT_FORBIDDEN_NEW_PHRASES],
+    forbiddenUsedPhrases: nextBotLogic.forbiddenUsedPhrases.length ? nextBotLogic.forbiddenUsedPhrases : [...DEFAULT_FORBIDDEN_USED_PHRASES],
+    dynamicResponses: nextBotLogic.dynamicResponses.length ? nextBotLogic.dynamicResponses : [...DEFAULT_DYNAMIC_RESPONSES],
+  };
+
+  await settingsStore.write({
+    forbiddenNewPhrases: botLogic.forbiddenNewPhrases,
+    forbiddenUsedPhrases: botLogic.forbiddenUsedPhrases,
+    dynamicResponses: botLogic.dynamicResponses,
+  });
 
   await catalog.loadCatalog();
 })();

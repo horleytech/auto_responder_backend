@@ -1,10 +1,11 @@
 function createSettingsStore(firestore) {
   const memory = {
     activeProvider: null,
-    csvUrl: null,
+    inventoryCsvUrl: null,
+    arrangementCsvUrl: null,
   };
 
-  const docRef = firestore ? firestore.doc('app/settings') : null;
+  const docRef = firestore ? firestore.collection('ar_settings').doc('config') : null;
 
   async function read() {
     if (!docRef) return { ...memory };
