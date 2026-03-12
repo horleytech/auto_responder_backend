@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { OpenAI } = require('openai');
 const {
   API_KEY,
   OPENAI_API_KEY,
@@ -24,7 +23,6 @@ app.use(express.static(path.join(__dirname, '../public')));
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY });
 
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
@@ -60,6 +58,8 @@ app.get('/api/providers', async (req, res) => {
 app.post('/api/providers', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
   const provider = String(req.body?.provider || '').toLowerCase().trim();
+  const available = providerService.listProviders().providers.map((entry) => entry.name);
+  if (!available.includes(provider)) return res.status(400).json({ error: `Unknown provider: ${provider}` });
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
   res.json({ success: true, activeProvider: provider });
@@ -179,10 +179,12 @@ app.post('/api/respond', async (req, res) => {
 
   try {
     const settings = await settingsStore.getSettings();
+    const activeProvider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
+    providerService.setActiveProvider(activeProvider);
 
-    // Dynamically load Data (Zero Duplicate Variables)
-    const activeNewDevices = (catalog.supportedNewDevices && catalog.supportedNewDevices.length) ? catalog.supportedNewDevices : ['iphone 13 pro max'];
-    const activeUsedDevices = (catalog.supportedUsedDevices && catalog.supportedUsedDevices.length) ? catalog.supportedUsedDevices : ['iphone 13 pro max'];
+    // Dynamically load live catalog data
+    const activeNewDevices = catalog.getNewDevices().length ? catalog.getNewDevices() : ['iphone 13 pro max'];
+    const activeUsedDevices = catalog.getUsedDevices().length ? catalog.getUsedDevices() : ['iphone 13 pro max'];
     
     let activeForbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases);
     if (!activeForbiddenNew.length) activeForbiddenNew = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
@@ -203,14 +205,16 @@ List of USED forbidden phrases: ${activeForbiddenUsed.join(', ')}
 Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
 RULES: "device" must perfectly match a string in the active list. "forbidden" must perfectly match a phrase in the active list. Both can be found. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'system', content: prompt }, { role: 'user', content: userMessage }],
-      response_format: { type: "json_object" },
-      temperature: 0,
-    });
-
-    const aiResponse = JSON.parse(completion.choices[0].message.content);
+    const aiRawResponse = await providerService.runProvider(
+      activeProvider,
+      prompt,
+      userMessage,
+      {
+        openAiKey: String(settings.OPENAI_API_KEY || '').trim() || OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+        qwenKey: String(settings.QWEN_API_KEY || '').trim() || QWEN_API_KEY || process.env.QWEN_API_KEY,
+      }
+    );
+    const aiResponse = JSON.parse(aiRawResponse || '{}');
     const { category, device, forbidden } = aiResponse;
     const foundDevice = device ? device.toLowerCase() : null;
     const foundForbidden = forbidden ? forbidden.toLowerCase() : null;
@@ -230,20 +234,21 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
-    // Log to Processor
-    setImmediate(async () => {
-      try {
-        await processor.saveRawRequest({
-          senderId: req.body?.senderId || 'Unknown',
-          senderMessage: userMessage,
-          aiCategory: category,
-          aiDeviceMatch: foundDevice,
-          replied: !!finalResponse,
-          timestamp: Date.now(),
-          processed: false,
-        });
-      } catch (err) { console.error('Failed to log request:', err.message); }
-    });
+    // Log to Processor before returning response (important in serverless environments)
+    try {
+      await processor.saveRawRequest({
+        senderId: req.body?.senderId || 'Unknown',
+        senderMessage: userMessage,
+        aiCategory: category,
+        aiDeviceMatch: foundDevice,
+        replied: !!finalResponse,
+        provider: activeProvider,
+        timestamp: Date.now(),
+        processed: false,
+      });
+    } catch (err) {
+      console.error('Failed to log request:', err.message);
+    }
 
     if (finalResponse) {
       return res.json({ data: [{ message: finalResponse }] });
@@ -266,6 +271,7 @@ app.get('*', (req, res) => {
   try {
     const settings = await settingsStore.getSettings();
     runtimeApiKey = settings.apiKey || runtimeApiKey;
+    providerService.setActiveProvider(settings.activeProvider || providerService.getActiveProvider());
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();
