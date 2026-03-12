@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { OpenAI } = require('openai');
 const {
   API_KEY,
   OPENAI_API_KEY,
@@ -23,6 +24,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY });
 
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
@@ -60,6 +62,12 @@ app.post('/api/providers', async (req, res) => {
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
+  
+  // Save provider choice to Firebase
+  if (firestore) {
+    try { await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true }); }
+    catch (e) { console.error("Firebase save error:", e.message); }
+  }
   res.json({ success: true, activeProvider: provider });
 });
 
@@ -96,6 +104,7 @@ app.get('/api/bot-logic', async (req, res) => {
   });
 });
 
+// >>> FIREBASE SAVING FIX <<<
 app.post('/api/bot-logic', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
   const next = {
@@ -104,6 +113,16 @@ app.post('/api/bot-logic', async (req, res) => {
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
   };
   await settingsStore.updateSettings(next);
+  
+  // Force Save to Firebase
+  if (firestore) {
+    try {
+      await firestore.collection('ar_settings').doc('botLogic').set(next, { merge: true });
+      console.log('✅ Bot Logic successfully synced to Firebase Database!');
+    } catch (e) {
+      console.error("Firebase logic save error:", e.message);
+    }
+  }
   return res.json({ success: true, ...next });
 });
 
@@ -158,7 +177,7 @@ app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, sett
 
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
-// ─── THE BULLETPROOF WEBHOOK (WITH DYNAMIC AI ROUTING) ────────────────────
+// ─── THE BULLETPROOF WEBHOOK ──────────────────────────────────────────────
 app.post('/api/respond', async (req, res) => {
   console.log(`\n🔔 [WEBHOOK] Request received!`);
   
@@ -178,9 +197,12 @@ app.post('/api/respond', async (req, res) => {
   try {
     const settings = await settingsStore.getSettings();
 
-    // Dynamically load Data (Zero Duplicate Variables)
-    const activeNewDevices = (catalog.supportedNewDevices && catalog.supportedNewDevices.length) ? catalog.supportedNewDevices : ['iphone 13 pro max'];
-    const activeUsedDevices = (catalog.supportedUsedDevices && catalog.supportedUsedDevices.length) ? catalog.supportedUsedDevices : ['iphone 13 pro max'];
+    // >>> THE CATALOG FIX: Call the correct functions! <<<
+    const loadedNew = catalog.getNewDevices();
+    const loadedUsed = catalog.getUsedDevices();
+    
+    const activeNewDevices = loadedNew && loadedNew.length ? loadedNew : ['iphone 13 pro max'];
+    const activeUsedDevices = loadedUsed && loadedUsed.length ? loadedUsed : ['iphone 13 pro max'];
     
     let activeForbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases);
     if (!activeForbiddenNew.length) activeForbiddenNew = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
@@ -199,9 +221,11 @@ List of USED devices: ${activeUsedDevices.join(', ')}
 List of USED forbidden phrases: ${activeForbiddenUsed.join(', ')}
 
 Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
-RULES: "device" must perfectly match a string in the active list. "forbidden" must perfectly match a phrase in the active list. Both can be found. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
+RULES: 
+1. "device": Find the closest match from the active list. It MUST match exactly how it is spelled in the list. Include storage (e.g. 256gb) if it exists in the item name in the list.
+2. "forbidden": First matching forbidden phrase in the list. Both can be found. 
+3. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
 
-    // >>> THE AI FIX: Read the Dashboard Provider <<<
     const activeProvider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
     console.log(`🤖 Routing request to ${activeProvider.toUpperCase()} API...`);
 
@@ -212,7 +236,6 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
       { openAiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY, qwenKey: QWEN_API_KEY || process.env.QWEN_API_KEY }
     );
 
-    // Clean JSON just in case Qwen wraps it in markdown blocks
     const cleanedString = String(rawAiString).replace(/```json/gi, '').replace(/```/g, '').trim();
     const aiResponse = JSON.parse(cleanedString || '{}');
 
@@ -235,7 +258,6 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
-    // Log to Processor
     setImmediate(async () => {
       try {
         await processor.saveRawRequest({
@@ -267,8 +289,22 @@ app.get('*', (req, res) => {
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
+// >>> FIREBASE LOADING ON BOOT <<<
 (async () => {
   try {
+    // 1. Check Firebase first so it persists across restarts
+    if (firestore) {
+      const doc = await firestore.collection('ar_settings').doc('botLogic').get();
+      if (doc.exists) {
+        console.log('📥 Loading saved Bot Logic from Firebase...');
+        await settingsStore.updateSettings(doc.data());
+      }
+      const sys = await firestore.collection('ar_settings').doc('system').get();
+      if (sys.exists && sys.data().activeProvider) {
+         providerService.setActiveProvider(sys.data().activeProvider);
+      }
+    }
+
     const settings = await settingsStore.getSettings();
     runtimeApiKey = settings.apiKey || runtimeApiKey;
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
