@@ -6,7 +6,7 @@ function withBase(url) {
 }
 
 export async function fetchJsonSafe(url, options = {}) {
-  // Grab the API key you type into the React Settings page
+  // Grab the API key stored by the Settings Page
   const apiKey = localStorage.getItem('API_KEY') || import.meta.env.VITE_API_KEY || '';
   
   const finalOptions = {
@@ -28,6 +28,10 @@ export async function fetchJsonSafe(url, options = {}) {
     } catch {
       data = { raw };
     }
+  }
+
+  if (!response.ok && response.status === 403) {
+    console.error('API Error: 403 Forbidden. Is your API Key set in the Settings tab?');
   }
 
   return { response, data };

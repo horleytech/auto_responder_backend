@@ -1,159 +1,144 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { OpenAI } = require('openai');
-require('dotenv').config();
-const axios = require('axios');
-const admin = require('firebase-admin');
+const {
+  API_KEY,
+  OPENAI_API_KEY,
+  QWEN_API_KEY,
+  CUSTOM_RESPONSE,
+  DEFAULT_AI_PROVIDER,
+  GOOGLE_SHEETS_CSV_URL,
+  ARRANGEMENT_MAP_CSV_URL,
+} = require('./config/env');
+const { firestore, FieldValue } = require('./services/firebaseService');
+const { createCatalogService } = require('./services/catalogService');
+const { createProviderService } = require('./services/providerService');
+const settingsStore = require('./services/settingsStore');
+const { createProcessor } = require('./services/processor');
+const { createMaintenanceRouter } = require('./controllers/maintenance');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, '../public')));
 
-// ─── Configuration ────────────────────────────────────────────────────────────
-const API_KEY = process.env.API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_CHATGPT;
+const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
+const providerService = createProviderService();
+const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY });
 
-if (!API_KEY || !OPENAI_API_KEY) {
-  console.error('❌ Missing API_KEY or OPENAI_CHATGPT in .env');
-  process.exit(1);
-}
-
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// ─── Firebase Initialization ──────────────────────────────────────────────────
-let db = null;
-try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    if (!admin.apps.length) {
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    }
-    db = admin.firestore();
-    console.log('🔥 Firebase initialized successfully.');
-  }
-} catch (error) {
-  console.error('❌ Firebase initialization failed:', error.message);
-}
-
-// ─── Bot Logic (Default Fallbacks) ────────────────────────────────────────────
-let DYNAMIC_RESPONSES = [
-  "Available", "Available chief", "Available big chief", "Available my Oga",
-  "Big chief, this is available", "Available boss", "Available boss, we get am",
-  "Available my guy", "My Oga, it's available"
-];
-let FORBIDDEN_NEW_PHRASES = ['esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box', 'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used'].map(p => p.toLowerCase());
-let FORBIDDEN_USED_PHRASES = ['esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box', 'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW'].map(p => p.toLowerCase());
 let responseIndex = 0;
+let runtimeApiKey = process.env.API_KEY || API_KEY;
 
-// Load live logic from Firebase if available
-async function loadBotLogic() {
-  if (!db) return;
-  try {
-    const doc = await db.collection('ar_settings').doc('botLogic').get();
-    if (doc.exists) {
-      const data = doc.data();
-      if (data.dynamicResponses) DYNAMIC_RESPONSES = data.dynamicResponses;
-      if (data.forbiddenNew) FORBIDDEN_NEW_PHRASES = data.forbiddenNew.map(p => p.toLowerCase());
-      if (data.forbiddenUsed) FORBIDDEN_USED_PHRASES = data.forbiddenUsed.map(p => p.toLowerCase());
-      console.log('✅ Live Bot Logic loaded from Firebase.');
-    }
-  } catch (error) {
-    console.error('Failed to load bot logic:', error);
-  }
-}
-loadBotLogic();
-
-// ─── Google Sheets Catalog ───────────────────────────────────────────────────
-const GOOGLE_SHEETS_CSV_URL = 'https://docs.google.com/spreadsheets/d/1Jh7TXif0dsaAVgoExEOCmkACZHPPZqIsiW4hH8T5Pts/export?format=csv';
-let SUPPORTED_NEW_DEVICES = [];
-let SUPPORTED_USED_DEVICES = [];
-
-function normalizeDeviceName(deviceType) {
-  if (!deviceType) return null;
-  return deviceType.toLowerCase().replace(/galaxy /gi, '').replace(/\s+/g, ' ').replace(/pro max/g, 'pro max').replace(/iphone /gi, 'iphone ').trim();
+function sanitizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v || '').trim()).filter(Boolean);
 }
 
-function isUsedCondition(condition) {
-  if (!condition) return false;
-  return condition.toLowerCase().includes('used') || condition.toLowerCase().includes('grade a');
+function resolveExpectedApiKey() {
+  return process.env.API_KEY || runtimeApiKey || API_KEY;
 }
 
-async function loadCatalogFromGoogleSheets() {
-  try {
-    const response = await axios.get(GOOGLE_SHEETS_CSV_URL);
-    const lines = response.data.split('\n').filter(line => line.trim() !== '');
-    const rows = lines.map(line => line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(cell => cell.replace(/^"(.*)"$/, '$1').trim()));
-    
-    const headers = rows[0];
-    const deviceIndex = headers.indexOf('Device Type');
-    const conditionIndex = headers.indexOf('Condition');
-    const priceIndex = headers.indexOf('Regular price');
-
-    const newSet = new Set(), usedSet = new Set();
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (row.length <= Math.max(deviceIndex, conditionIndex, priceIndex)) continue;
-      const deviceType = row[deviceIndex], condition = row[conditionIndex], price = row[priceIndex];
-      if (!deviceType || !price || price.startsWith('#') || price === '') continue;
-
-      const normalized = normalizeDeviceName(deviceType);
-      if (!normalized) continue;
-      isUsedCondition(condition) ? usedSet.add(normalized) : newSet.add(normalized);
-    }
-    SUPPORTED_NEW_DEVICES = Array.from(newSet);
-    SUPPORTED_USED_DEVICES = Array.from(usedSet);
-    console.log(`✅ Catalog Loaded: ${SUPPORTED_NEW_DEVICES.length} new, ${SUPPORTED_USED_DEVICES.length} used devices.`);
-  } catch (err) {
-    console.error('❌ Failed to load catalog:', err.message);
-  }
-}
-loadCatalogFromGoogleSheets();
-
-// ─── API Endpoints (Bouncer) ────────────────────────────────────────────────
-function isAuthorized(req, res, next) {
-  const providedKey = req.headers['x-api-key'] || req.query.key;
-  if (providedKey === API_KEY) return next();
-  return res.sendStatus(403);
+function isAuthorized(req) {
+  const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
+  return incoming && incoming === resolveExpectedApiKey();
 }
 
-app.get('/api/requests', isAuthorized, async (req, res) => {
-  if (!db) return res.json({ requests: [] });
-  try {
-    const snapshot = await db.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
-    res.json({ requests: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) });
-  } catch (error) { res.status(500).json({ error: 'Failed to fetch logs' }); }
+// ─── API Endpoints (Admin & Dashboard) ──────────────────────────────────────
+app.get('/api/providers', async (req, res) => {
+  const saved = await settingsStore.getSettings();
+  res.json({
+    ...providerService.listProviders(),
+    activeProvider: saved.activeProvider || providerService.getActiveProvider(),
+    envKeysLoaded: {
+      API_KEY: Boolean(process.env.API_KEY),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
+      QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
+    },
+  });
 });
 
-app.post('/api/settings', isAuthorized, async (req, res) => {
-  if (!db) return res.status(500).json({ error: 'Firebase not connected' });
-  try {
-    await db.collection('ar_settings').doc('botLogic').set(req.body, { merge: true });
-    await loadBotLogic(); 
-    res.json({ success: true });
-  } catch (error) { res.status(500).json({ error: 'Failed to save settings' }); }
+app.get('/api/settings', async (req, res) => res.json(await settingsStore.getSettings()));
+
+app.post('/api/settings', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  const nextApiKey = String(req.body?.apiKey || '').trim();
+  if (nextApiKey) runtimeApiKey = nextApiKey;
+  await settingsStore.updateSettings(req.body || {});
+  res.json({ success: true });
 });
 
-// ─── MAIN WEBHOOK (YOUR ORIGINAL LOGIC) ──────────────────────────────────────
-app.post('/api/respond', isAuthorized, async (req, res) => {
-  const userMessage = req.body.senderMessage;
+app.get('/api/bot-logic', async (req, res) => {
+  const settings = await settingsStore.getSettings();
+  res.json({
+    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
+  });
+});
+
+app.post('/api/bot-logic', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  const next = {
+    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
+    dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
+  };
+  await settingsStore.updateSettings(next);
+  return res.json({ success: true, ...next });
+});
+
+app.get('/api/requests', async (req, res) => {
+  if (!firestore) return res.json({ requests: [] });
+  const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
+  res.json({ requests: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
+});
+
+app.get('/api/clean-analytics', async (req, res) => {
+  const timeframe = String(req.query.timeframe || '1m').toLowerCase();
+  const now = Date.now();
+  const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
+  let devices = [], customers = [];
+  if (firestore) {
+    const [aSnap, cSnap] = await Promise.all([firestore.collection('ar_analytics').orderBy('requestCount', 'desc').get(), firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get()]);
+    devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
+    customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
+  }
+  res.json({ devices, customers, timeframe });
+});
+
+app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, resolveApiKey: resolveExpectedApiKey }));
+
+// ─── THE PERFECT WEBHOOK (YOUR ORIGINAL LOGIC) ──────────────────────────────
+app.post('/api/respond', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+
+  const userMessage = String(req.body?.senderMessage || '').trim();
   if (!userMessage) return res.status(400).json({ error: 'Missing senderMessage' });
 
-  console.log(`\n📥 NEW MESSAGE: "${userMessage}"`);
+  console.log(`\n📥 INCOMING: "${userMessage}"`);
 
   try {
+    const settings = await settingsStore.getSettings();
+    
+    // Fallback to defaults if Firebase logic is empty
+    const NEW_DEVICES = catalog.supportedNewDevices || [];
+    const USED_DEVICES = catalog.supportedUsedDevices || [];
+    const FORBIDDEN_NEW = settings.forbiddenNewPhrases?.length ? settings.forbiddenNewPhrases : ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
+    const FORBIDDEN_USED = settings.forbiddenUsedPhrases?.length ? settings.forbiddenUsedPhrases : ['esim', 'locked', 'idm', 'wifi only', 'panel', 'NEW'];
+    const DYNAMIC_RESPONSES = settings.dynamicResponses?.length ? settings.dynamicResponses : ["Available", "Available chief", "Available boss"];
+
     const prompt = `
-You are a JSON-based entity extractor for an availability checker. Return JSON ONLY.
-First, determine category: 'new' or 'used'. If message contains 'used', category is 'used'. Else 'new'.
-List of NEW devices: ${SUPPORTED_NEW_DEVICES.join(', ')}
-List of NEW forbidden phrases: ${FORBIDDEN_NEW_PHRASES.join(', ')}
-List of USED devices: ${SUPPORTED_USED_DEVICES.join(', ')}
-List of USED forbidden phrases: ${FORBIDDEN_USED_PHRASES.join(', ')}
+You are a JSON-based entity extractor. Return JSON ONLY.
+Category: If message contains 'used', category is 'used'. Else 'new'.
+List of NEW devices: ${NEW_DEVICES.join(', ')}
+List of NEW forbidden phrases: ${FORBIDDEN_NEW.join(', ')}
+List of USED devices: ${USED_DEVICES.join(', ')}
+List of USED forbidden phrases: ${FORBIDDEN_USED.join(', ')}
 
 Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
-RULES: 
-1. "device": Closest match from active device list. Must spell exactly as it appears in list.
-2. "forbidden": First matching forbidden phrase.
-3. Exception: 'esim' is not forbidden if 'physical' is also in the message.`.trim();
+RULES: "device" must perfectly match a string in the active list. "forbidden" must perfectly match a phrase in the active list. Both can be found. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -167,33 +152,36 @@ RULES:
     const foundDevice = device ? device.toLowerCase() : null;
     const foundForbidden = forbidden ? forbidden.toLowerCase() : null;
 
-    const activeSupportedList = (category === 'used') ? SUPPORTED_USED_DEVICES : SUPPORTED_NEW_DEVICES;
-    const activeForbiddenList = (category === 'used') ? FORBIDDEN_USED_PHRASES : FORBIDDEN_NEW_PHRASES;
+    const activeSupportedList = (category === 'used') ? USED_DEVICES : NEW_DEVICES;
+    const activeForbiddenList = (category === 'used') ? FORBIDDEN_USED : FORBIDDEN_NEW;
 
     let finalResponse = null;
 
-    // YOUR EXACT ORIGINAL JUDGEMENT
+    // JUDGEMENT
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
     } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      finalResponse = DYNAMIC_RESPONSES[responseIndex];
-      responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
-      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
+      finalResponse = DYNAMIC_RESPONSES[responseIndex % DYNAMIC_RESPONSES.length];
+      responseIndex++;
+      console.log(`✅ Match: ${foundDevice} | Reply: ${finalResponse}`);
     } else {
-      console.log(`🤷 No match found.`);
+      console.log(`🤷 No match or forbidden phrase found.`);
     }
 
-    // FIREBASE LOGGING FOR FRONTEND
-    if (db) {
-      db.collection('ar_raw_requests').add({
-        senderMessage: userMessage,
-        aiCategory: category,
-        aiDeviceMatch: foundDevice,
-        replied: !!finalResponse,
-        timestamp: Date.now(),
-        processed: false
-      }).catch(err => console.error("Firebase error:", err));
-    }
+    // FIREBASE LOGGING
+    setImmediate(async () => {
+      try {
+        await processor.saveRawRequest({
+          senderId: req.body?.senderId || 'Unknown',
+          senderMessage: userMessage,
+          aiCategory: category,
+          aiDeviceMatch: foundDevice,
+          replied: !!finalResponse,
+          timestamp: Date.now(),
+          processed: false,
+        });
+      } catch (err) { console.error('Failed to log request:', err.message); }
+    });
 
     if (finalResponse) {
       return res.json({ data: [{ message: finalResponse }] });
@@ -207,5 +195,17 @@ RULES:
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API route not found' });
+  return res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
+(async () => {
+  const settings = await settingsStore.getSettings();
+  runtimeApiKey = settings.apiKey || runtimeApiKey;
+  catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
+  catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
+  await catalog.loadCatalog();
+})();
+
+module.exports = app;
