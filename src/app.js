@@ -59,6 +59,15 @@ app.get('/api/providers', async (req, res) => {
   });
 });
 
+app.post('/api/providers', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  const provider = String(req.body?.provider || '').toLowerCase().trim();
+  if (!['chatgpt', 'qwen'].includes(provider)) return res.status(400).json({ error: 'Unsupported provider.' });
+  providerService.setActiveProvider(provider);
+  await settingsStore.updateSettings({ activeProvider: provider });
+  res.json({ success: true, activeProvider: provider });
+});
+
 app.get('/api/settings', async (req, res) => res.json(await settingsStore.getSettings()));
 
 app.post('/api/settings', async (req, res) => {
@@ -67,6 +76,20 @@ app.post('/api/settings', async (req, res) => {
   if (nextApiKey) runtimeApiKey = nextApiKey;
   await settingsStore.updateSettings(req.body || {});
   res.json({ success: true });
+});
+
+app.get('/api/catalog-source', (req, res) => {
+  res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+});
+
+app.post('/api/catalog-source', async (req, res) => {
+  if (!isAuthorized(req)) return res.sendStatus(403);
+  catalog.setInventoryCsvUrl(String(req.body?.inventoryCsvUrl || '').trim());
+  catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
+  const loaded = await catalog.loadCatalog();
+  if (!loaded.success) return res.status(400).json(loaded);
+  await settingsStore.updateSettings({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+  return res.json({ success: true, ...loaded });
 });
 
 app.get('/api/bot-logic', async (req, res) => {
@@ -122,7 +145,7 @@ app.post('/api/respond', async (req, res) => {
   try {
     const settings = await settingsStore.getSettings();
     
-    // Fallback to defaults if Firebase logic is empty
+    // Fallback to defaults if Settings logic is empty
     const NEW_DEVICES = catalog.supportedNewDevices || [];
     const USED_DEVICES = catalog.supportedUsedDevices || [];
     const FORBIDDEN_NEW = settings.forbiddenNewPhrases?.length ? settings.forbiddenNewPhrases : ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
@@ -170,6 +193,7 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
 
     // FIREBASE LOGGING
     setImmediate(async () => {
+      if (!firestore) return;
       try {
         await processor.saveRawRequest({
           senderId: req.body?.senderId || 'Unknown',
