@@ -3,11 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const { OpenAI } = require('openai');
 const {
-  API_KEY,
-  OPENAI_API_KEY,
-  QWEN_API_KEY,
-  GOOGLE_SHEETS_CSV_URL,
-  ARRANGEMENT_MAP_CSV_URL,
+  API_KEY, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
 const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
@@ -43,6 +39,23 @@ function isAuthorized(req) {
   return incoming === resolveExpectedApiKey();
 }
 
+// ─── NEW: SECURE LOGIN ENDPOINT ───────────────────────────────────────────
+app.post('/api/login', (req, res) => {
+  const password = String(req.body?.password || '').trim();
+  const correctPassword = String(process.env.DASHBOARD_PASSWORD || '').trim();
+
+  if (!correctPassword) {
+    return res.status(500).json({ error: 'Server Error: DASHBOARD_PASSWORD not configured in .env' });
+  }
+
+  if (password === correctPassword) {
+    // If correct, return the master API key to unlock the frontend!
+    res.json({ success: true, apiKey: resolveExpectedApiKey() });
+  } else {
+    res.status(401).json({ error: 'Incorrect master password.' });
+  }
+});
+
 // ─── DASHBOARD ENDPOINTS ──────────────────────────────────────────────────
 app.get('/api/providers', async (req, res) => {
   const saved = await settingsStore.getSettings();
@@ -62,8 +75,6 @@ app.post('/api/providers', async (req, res) => {
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
-  
-  // Save provider choice to Firebase
   if (firestore) {
     try { await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true }); }
     catch (e) { console.error("Firebase save error:", e.message); }
@@ -104,7 +115,6 @@ app.get('/api/bot-logic', async (req, res) => {
   });
 });
 
-// >>> FIREBASE SAVING FIX <<<
 app.post('/api/bot-logic', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
   const next = {
@@ -113,15 +123,9 @@ app.post('/api/bot-logic', async (req, res) => {
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
   };
   await settingsStore.updateSettings(next);
-  
-  // Force Save to Firebase
   if (firestore) {
-    try {
-      await firestore.collection('ar_settings').doc('botLogic').set(next, { merge: true });
-      console.log('✅ Bot Logic successfully synced to Firebase Database!');
-    } catch (e) {
-      console.error("Firebase logic save error:", e.message);
-    }
+    try { await firestore.collection('ar_settings').doc('botLogic').set(next, { merge: true }); } 
+    catch (e) { console.error("Firebase logic save error:", e.message); }
   }
   return res.json({ success: true, ...next });
 });
@@ -166,41 +170,29 @@ app.get('/api/clean-analytics', async (req, res) => {
       ]);
       devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
       customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
-    } catch (e) {
-      console.error("Firebase analytics read error:", e.message);
-    }
+    } catch (e) { console.error("Firebase analytics read error:", e.message); }
   }
   res.json({ devices, customers, timeframe });
 });
 
 app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, resolveApiKey: resolveExpectedApiKey }));
-
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
-// ─── THE BULLETPROOF WEBHOOK ──────────────────────────────────────────────
+// ─── THE WEBHOOK (UNCHANGED) ──────────────────────────────────────────────
 app.post('/api/respond', async (req, res) => {
   console.log(`\n🔔 [WEBHOOK] Request received!`);
   
-  if (!isAuthorized(req)) {
-    console.log(`🚫 [BLOCKED] Unauthorized Request.`);
-    return res.sendStatus(403);
-  }
+  if (!isAuthorized(req)) return res.sendStatus(403);
 
   const userMessage = String(req.body?.senderMessage || '').trim();
-  if (!userMessage) {
-    console.log(`⚠️ [BLOCKED] Missing 'senderMessage'.`);
-    return res.status(400).json({ error: 'Missing senderMessage' });
-  }
+  if (!userMessage) return res.status(400).json({ error: 'Missing senderMessage' });
 
   console.log(`📥 INCOMING MESSAGE: "${userMessage}"`);
 
   try {
     const settings = await settingsStore.getSettings();
-
-    // >>> THE CATALOG FIX: Call the correct functions! <<<
     const loadedNew = catalog.getNewDevices();
     const loadedUsed = catalog.getUsedDevices();
-    
     const activeNewDevices = loadedNew && loadedNew.length ? loadedNew : ['iphone 13 pro max'];
     const activeUsedDevices = loadedUsed && loadedUsed.length ? loadedUsed : ['iphone 13 pro max'];
     
@@ -230,9 +222,7 @@ RULES:
     console.log(`🤖 Routing request to ${activeProvider.toUpperCase()} API...`);
 
     const rawAiString = await providerService.runProvider(
-      activeProvider,
-      prompt,
-      userMessage,
+      activeProvider, prompt, userMessage,
       { openAiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY, qwenKey: QWEN_API_KEY || process.env.QWEN_API_KEY }
     );
 
@@ -272,11 +262,8 @@ RULES:
       } catch (err) { console.error('Failed to log request:', err.message); }
     });
 
-    if (finalResponse) {
-      return res.json({ data: [{ message: finalResponse }] });
-    } else {
-      return res.sendStatus(204);
-    }
+    if (finalResponse) return res.json({ data: [{ message: finalResponse }] });
+    return res.sendStatus(204);
 
   } catch (err) {
     console.error('💥 Webhook Server error:', err.message);
@@ -289,10 +276,8 @@ app.get('*', (req, res) => {
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// >>> FIREBASE LOADING ON BOOT <<<
 (async () => {
   try {
-    // 1. Check Firebase first so it persists across restarts
     if (firestore) {
       const doc = await firestore.collection('ar_settings').doc('botLogic').get();
       if (doc.exists) {
@@ -304,15 +289,12 @@ app.get('*', (req, res) => {
          providerService.setActiveProvider(sys.data().activeProvider);
       }
     }
-
     const settings = await settingsStore.getSettings();
     runtimeApiKey = settings.apiKey || runtimeApiKey;
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();
-  } catch (e) {
-    console.error('Error during init:', e.message);
-  }
+  } catch (e) { console.error('Error during init:', e.message); }
 })();
 
 module.exports = app;

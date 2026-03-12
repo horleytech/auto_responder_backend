@@ -6,9 +6,11 @@ import BotLogicPage from './pages/BotLogicPage';
 import MaintenancePage from './pages/MaintenancePage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
 import { fetchJsonSafe } from './lib/api';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [apiKey, setApiKey] = useState('');
@@ -20,13 +22,22 @@ export default function App() {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
+  // Check if we already logged in
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('API_KEY') || '';
-    if (storedApiKey) setApiKey(storedApiKey);
+    const storedApiKey = localStorage.getItem('API_KEY');
+    if (storedApiKey) {
+      setApiKey(storedApiKey);
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // Fetch Dashboard data ONLY if logged in
+  useEffect(() => {
+    if (!isAuthenticated || !apiKey) return;
 
     (async () => {
       const providersResult = await fetchJsonSafe('/api/providers');
-      if (providersResult.response.ok) {
+      if (providersResult.response?.ok) {
         setProviderState({
           activeProvider: providersResult.data.activeProvider,
           providers: providersResult.data.providers || [],
@@ -35,20 +46,23 @@ export default function App() {
       }
 
       const catalogResult = await fetchJsonSafe('/api/catalog-source');
-      if (catalogResult.response.ok) {
+      if (catalogResult.response?.ok) {
         setCatalogState({
           inventoryCsvUrl: catalogResult.data.inventoryCsvUrl || '',
           arrangementCsvUrl: catalogResult.data.arrangementCsvUrl || '',
         });
       }
-
-      const settingsResult = await fetchJsonSafe('/api/settings');
-      if (settingsResult.response.ok && settingsResult.data?.apiKey && !storedApiKey) {
-        setApiKey(settingsResult.data.apiKey);
-        localStorage.setItem('API_KEY', settingsResult.data.apiKey);
-      }
     })();
-  }, []);
+  }, [isAuthenticated, apiKey]);
+
+  // THE LOCK SCREEN
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={(key) => {
+      setApiKey(key);
+      localStorage.setItem('API_KEY', key);
+      setIsAuthenticated(true);
+    }} />;
+  }
 
   return (
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
