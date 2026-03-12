@@ -58,8 +58,6 @@ app.get('/api/providers', async (req, res) => {
 app.post('/api/providers', async (req, res) => {
   if (!isAuthorized(req)) return res.sendStatus(403);
   const provider = String(req.body?.provider || '').toLowerCase().trim();
-  const available = providerService.listProviders().providers.map((entry) => entry.name);
-  if (!available.includes(provider)) return res.status(400).json({ error: `Unknown provider: ${provider}` });
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
   res.json({ success: true, activeProvider: provider });
@@ -160,7 +158,7 @@ app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, sett
 
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
-// ─── THE BULLETPROOF WEBHOOK ──────────────────────────────────────────────
+// ─── THE BULLETPROOF WEBHOOK (WITH DYNAMIC AI ROUTING) ────────────────────
 app.post('/api/respond', async (req, res) => {
   console.log(`\n🔔 [WEBHOOK] Request received!`);
   
@@ -179,12 +177,10 @@ app.post('/api/respond', async (req, res) => {
 
   try {
     const settings = await settingsStore.getSettings();
-    const activeProvider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
-    providerService.setActiveProvider(activeProvider);
 
-    // Dynamically load live catalog data
-    const activeNewDevices = catalog.getNewDevices().length ? catalog.getNewDevices() : ['iphone 13 pro max'];
-    const activeUsedDevices = catalog.getUsedDevices().length ? catalog.getUsedDevices() : ['iphone 13 pro max'];
+    // Dynamically load Data (Zero Duplicate Variables)
+    const activeNewDevices = (catalog.supportedNewDevices && catalog.supportedNewDevices.length) ? catalog.supportedNewDevices : ['iphone 13 pro max'];
+    const activeUsedDevices = (catalog.supportedUsedDevices && catalog.supportedUsedDevices.length) ? catalog.supportedUsedDevices : ['iphone 13 pro max'];
     
     let activeForbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases);
     if (!activeForbiddenNew.length) activeForbiddenNew = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
@@ -205,19 +201,24 @@ List of USED forbidden phrases: ${activeForbiddenUsed.join(', ')}
 Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
 RULES: "device" must perfectly match a string in the active list. "forbidden" must perfectly match a phrase in the active list. Both can be found. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
 
-    const aiRawResponse = await providerService.runProvider(
+    // >>> THE AI FIX: Read the Dashboard Provider <<<
+    const activeProvider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
+    console.log(`🤖 Routing request to ${activeProvider.toUpperCase()} API...`);
+
+    const rawAiString = await providerService.runProvider(
       activeProvider,
       prompt,
       userMessage,
-      {
-        openAiKey: String(settings.OPENAI_API_KEY || '').trim() || OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-        qwenKey: String(settings.QWEN_API_KEY || '').trim() || QWEN_API_KEY || process.env.QWEN_API_KEY,
-      }
+      { openAiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY, qwenKey: QWEN_API_KEY || process.env.QWEN_API_KEY }
     );
-    const aiResponse = JSON.parse(aiRawResponse || '{}');
-    const { category, device, forbidden } = aiResponse;
-    const foundDevice = device ? device.toLowerCase() : null;
-    const foundForbidden = forbidden ? forbidden.toLowerCase() : null;
+
+    // Clean JSON just in case Qwen wraps it in markdown blocks
+    const cleanedString = String(rawAiString).replace(/```json/gi, '').replace(/```/g, '').trim();
+    const aiResponse = JSON.parse(cleanedString || '{}');
+
+    const category = aiResponse.category === 'used' ? 'used' : 'new';
+    const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
+    const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
@@ -234,21 +235,20 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
-    // Log to Processor before returning response (important in serverless environments)
-    try {
-      await processor.saveRawRequest({
-        senderId: req.body?.senderId || 'Unknown',
-        senderMessage: userMessage,
-        aiCategory: category,
-        aiDeviceMatch: foundDevice,
-        replied: !!finalResponse,
-        provider: activeProvider,
-        timestamp: Date.now(),
-        processed: false,
-      });
-    } catch (err) {
-      console.error('Failed to log request:', err.message);
-    }
+    // Log to Processor
+    setImmediate(async () => {
+      try {
+        await processor.saveRawRequest({
+          senderId: req.body?.senderId || 'Unknown',
+          senderMessage: userMessage,
+          aiCategory: category,
+          aiDeviceMatch: foundDevice,
+          replied: !!finalResponse,
+          timestamp: Date.now(),
+          processed: false,
+        });
+      } catch (err) { console.error('Failed to log request:', err.message); }
+    });
 
     if (finalResponse) {
       return res.json({ data: [{ message: finalResponse }] });
@@ -271,7 +271,6 @@ app.get('*', (req, res) => {
   try {
     const settings = await settingsStore.getSettings();
     runtimeApiKey = settings.apiKey || runtimeApiKey;
-    providerService.setActiveProvider(settings.activeProvider || providerService.getActiveProvider());
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();
