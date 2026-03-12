@@ -4,6 +4,8 @@ const path = require('path');
 const {
   API_KEY,
   QWEN_API_KEY,
+  CHATGPT_MODEL,
+  QWEN_MODEL,
   GOOGLE_SHEETS_CSV_URL,
   ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
@@ -55,9 +57,112 @@ const DEFAULT_DYNAMIC_RESPONSES = [...DYNAMIC_RESPONSES];
 let SUPPORTED_NEW_DEVICES = [];
 let SUPPORTED_USED_DEVICES = [];
 
-function sanitizeStringArray(value) {
+// Forbidden phrases (original)
+const FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+const FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
+
+// Forbidden phrases (original)
+const FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+const FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
+
+// Forbidden phrases (original)
+const FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+const FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
+
+const DEFAULT_FORBIDDEN_NEW = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'used'];
+const DEFAULT_FORBIDDEN_USED = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'new'];
+const DEFAULT_DYNAMIC_RESPONSES = ['Available', 'Available chief', 'Available boss'];
+
+function sanitizeStringArray(value, { lowerCase = false } = {}) {
   if (!Array.isArray(value)) return [];
-  return value.map((v) => String(v || '').trim()).filter(Boolean);
+  return value
+    .map((v) => String(v || '').trim())
+    .filter(Boolean)
+    .map((v) => (lowerCase ? v.toLowerCase() : v));
+}
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
+}
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
+}
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
 }
 
 function normalizeDeviceName(deviceType) {
@@ -203,6 +308,10 @@ app.get('/api/providers', async (req, res) => {
       API_KEY: Boolean(process.env.API_KEY),
       OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT),
       QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
+    },
+    models: {
+      chatgpt: CHATGPT_MODEL,
+      qwen: QWEN_MODEL,
     },
   });
 });
