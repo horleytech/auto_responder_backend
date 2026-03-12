@@ -50,6 +50,24 @@ const FORBIDDEN_USED_PHRASES = [
   'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
 ].map((p) => p.toLowerCase());
 
+const DEFAULT_FORBIDDEN_NEW_PHRASES = [...FORBIDDEN_NEW_PHRASES];
+const DEFAULT_FORBIDDEN_USED_PHRASES = [...FORBIDDEN_USED_PHRASES];
+const DEFAULT_DYNAMIC_RESPONSES = [...DYNAMIC_RESPONSES];
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
+
+// Forbidden phrases (original)
+const FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+const FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
 let SUPPORTED_NEW_DEVICES = [];
 let SUPPORTED_USED_DEVICES = [];
 
@@ -91,6 +109,24 @@ function sanitizeStringArray(value, { lowerCase = false } = {}) {
     .map((v) => String(v || '').trim())
     .filter(Boolean)
     .map((v) => (lowerCase ? v.toLowerCase() : v));
+}
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
 }
 
 function normalizeDeviceName(deviceType) {
@@ -314,18 +350,22 @@ app.post('/api/catalog-source', async (req, res) => {
 
 app.get('/api/bot-logic', async (req, res) => {
   const settings = await settingsStore.getSettings();
+  const forbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases).map((p) => p.toLowerCase());
+  const forbiddenUsed = sanitizeStringArray(settings.forbiddenUsedPhrases).map((p) => p.toLowerCase());
+  const dynamicResponses = sanitizeStringArray(settings.dynamicResponses);
+
   res.json({
-    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
-    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
+    forbiddenNewPhrases: forbiddenNew.length ? forbiddenNew : DEFAULT_FORBIDDEN_NEW_PHRASES,
+    forbiddenUsedPhrases: forbiddenUsed.length ? forbiddenUsed : DEFAULT_FORBIDDEN_USED_PHRASES,
+    dynamicResponses: dynamicResponses.length ? dynamicResponses : DEFAULT_DYNAMIC_RESPONSES,
   });
 });
 
 app.post('/api/bot-logic', async (req, res) => {
   if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   const next = {
-    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
+    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases).map((p) => p.toLowerCase()),
+    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases).map((p) => p.toLowerCase()),
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
   };
   await settingsStore.updateSettings(next);
@@ -431,8 +471,15 @@ app.post('/api/respond', async (req, res) => {
     foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
     foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
 
+    const forbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases).map((p) => p.toLowerCase());
+    const forbiddenUsed = sanitizeStringArray(settings.forbiddenUsedPhrases).map((p) => p.toLowerCase());
+    const dynamicResponses = sanitizeStringArray(settings.dynamicResponses);
+
     const activeSupportedList = category === 'used' ? SUPPORTED_USED_DEVICES : SUPPORTED_NEW_DEVICES;
-    const activeForbiddenList = category === 'used' ? FORBIDDEN_USED_PHRASES : FORBIDDEN_NEW_PHRASES;
+    const activeForbiddenList = category === 'used'
+      ? (forbiddenUsed.length ? forbiddenUsed : DEFAULT_FORBIDDEN_USED_PHRASES)
+      : (forbiddenNew.length ? forbiddenNew : DEFAULT_FORBIDDEN_NEW_PHRASES);
+    const activeResponses = dynamicResponses.length ? dynamicResponses : DEFAULT_DYNAMIC_RESPONSES;
 
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       await logRawToFirebase({ req, userMessage, category, foundDevice, foundForbidden, finalResponse: null });
@@ -440,8 +487,8 @@ app.post('/api/respond', async (req, res) => {
     }
 
     if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      finalResponse = DYNAMIC_RESPONSES[responseIndex];
-      responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
+      finalResponse = activeResponses[responseIndex];
+      responseIndex = (responseIndex + 1) % activeResponses.length;
       await logRawToFirebase({ req, userMessage, category, foundDevice, foundForbidden, finalResponse });
       return res.json({ data: [{ message: finalResponse }] });
     }
