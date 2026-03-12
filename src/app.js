@@ -28,7 +28,7 @@ const processor = createProcessor({ firestore, catalog, providerService, setting
 let runtimeApiKey = String(process.env.API_KEY || API_KEY || '').trim();
 
 // Dynamic response pool (original)
-const DYNAMIC_RESPONSES = [
+var DYNAMIC_RESPONSES = [
   'Available', 'Available chief', 'Available big chief', 'Available my Oga',
   'Big chief, this is available', 'Available boss', 'Available boss, we get am',
   'Available my guy', "My Oga, it's available", 'Available boss, make i paste address',
@@ -38,6 +38,24 @@ const DYNAMIC_RESPONSES = [
   'Available my brother',
 ];
 let responseIndex = 0;
+
+// Forbidden phrases (original)
+var FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+var FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
+var DEFAULT_FORBIDDEN_NEW_PHRASES = [...FORBIDDEN_NEW_PHRASES];
+var DEFAULT_FORBIDDEN_USED_PHRASES = [...FORBIDDEN_USED_PHRASES];
+var DEFAULT_DYNAMIC_RESPONSES = [...DYNAMIC_RESPONSES];
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
 
 // Forbidden phrases (original)
 const FORBIDDEN_NEW_PHRASES = [
@@ -109,6 +127,24 @@ function sanitizeStringArray(value, { lowerCase = false } = {}) {
     .map((v) => String(v || '').trim())
     .filter(Boolean)
     .map((v) => (lowerCase ? v.toLowerCase() : v));
+}
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
 }
 
 function normalizeDeviceName(deviceType) {
