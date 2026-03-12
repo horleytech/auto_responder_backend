@@ -25,7 +25,7 @@ const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_
 const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 
-const RUNTIME_API_KEY = String(process.env.API_KEY || API_KEY || '').trim();
+let runtimeApiKey = String(process.env.API_KEY || API_KEY || '').trim();
 
 // Dynamic response pool (original)
 const DYNAMIC_RESPONSES = [
@@ -38,6 +38,20 @@ const DYNAMIC_RESPONSES = [
   'Available my brother',
 ];
 let responseIndex = 0;
+
+// Forbidden phrases (original)
+const FORBIDDEN_NEW_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
+].map((p) => p.toLowerCase());
+
+const FORBIDDEN_USED_PHRASES = [
+  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
+  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
+].map((p) => p.toLowerCase());
+
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
 
 // Forbidden phrases (original)
 const FORBIDDEN_NEW_PHRASES = [
@@ -83,13 +97,33 @@ function isUsedCondition(condition) {
   return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
 }
 
-function resolveExpectedApiKey() {
-  return RUNTIME_API_KEY;
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return String(deviceType)
+    .toLowerCase()
+    .replace(/galaxy /gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/pro max/g, 'pro max')
+    .replace(/pro xl/g, 'pro xl')
+    .replace(/iphone /gi, 'iphone ')
+    .trim();
 }
 
-function isAuthorized(req) {
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  const lower = String(condition).toLowerCase();
+  return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
+}
+
+function resolveExpectedApiKey() {
+  return String(process.env.API_KEY || runtimeApiKey || API_KEY || '').trim();
+}
+
+function isAuthorized(req, { allowWhenUnconfigured = false } = {}) {
+  const expected = resolveExpectedApiKey();
+  if (!expected) return Boolean(allowWhenUnconfigured);
   const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
-  return incoming && incoming === resolveExpectedApiKey();
+  return incoming === expected;
 }
 
 async function loadCatalogFromGoogleSheets(url = GOOGLE_SHEETS_CSV_URL) {
@@ -215,7 +249,7 @@ app.get('/api/providers', async (req, res) => {
 });
 
 app.post('/api/providers', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
@@ -225,7 +259,9 @@ app.post('/api/providers', async (req, res) => {
 app.get('/api/settings', async (req, res) => res.json(await settingsStore.getSettings()));
 
 app.post('/api/settings', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
+  const nextApiKey = String(req.body?.apiKey || '').trim();
+  if (nextApiKey) runtimeApiKey = nextApiKey;
   await settingsStore.updateSettings(req.body || {});
   res.json({ success: true });
 });
@@ -235,7 +271,7 @@ app.get('/api/catalog-source', (req, res) => {
 });
 
 app.post('/api/catalog-source', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   catalog.setInventoryCsvUrl(String(req.body?.inventoryCsvUrl || '').trim());
   catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
   const loaded = await catalog.loadCatalog();
@@ -254,7 +290,7 @@ app.get('/api/bot-logic', async (req, res) => {
 });
 
 app.post('/api/bot-logic', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   const next = {
     forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
@@ -270,7 +306,7 @@ app.get('/api/dictionary', async (req, res) => {
 });
 
 app.post('/api/dictionary', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   try {
     await processor.upsertDictionary(req.body || {});
     res.json({ success: true });
@@ -280,7 +316,7 @@ app.post('/api/dictionary', async (req, res) => {
 });
 
 app.delete('/api/dictionary/:id', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isAuthorized(req, { allowWhenUnconfigured: true })) return res.sendStatus(403);
   await processor.deleteDictionary(req.params.id);
   res.json({ success: true });
 });
@@ -332,7 +368,7 @@ app.post('/api/reload-catalog', async (req, res) => {
 // ─── MAIN ENDPOINT (RESTORED CORE LOGIC) ───────────────────────────────────
 app.post('/api/respond', async (req, res) => {
   const providedKey = String(req.headers['x-api-key'] || '').trim();
-  if (!resolveExpectedApiKey() || providedKey !== resolveExpectedApiKey()) {
+  if (!isAuthorized(req)) {
     return res.sendStatus(403);
   }
 
@@ -396,6 +432,7 @@ app.get('*', (req, res) => {
 (async () => {
   try {
     const settings = await settingsStore.getSettings();
+    runtimeApiKey = String(settings.apiKey || runtimeApiKey || '').trim();
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();
