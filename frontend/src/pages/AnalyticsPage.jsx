@@ -17,7 +17,7 @@ export default function AnalyticsPage() {
       const { response, data: payload } = await fetchJsonSafe(`/api/clean-analytics?timeframe=${timeframe}`);
       
       if (!response.ok) {
-        setStatus('Analytics API unavailable. Check if server is running and API key is set.');
+        setStatus(`Analytics API unavailable (${response.status}). ${payload?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
         return;
       }

@@ -6,8 +6,9 @@ function withBase(url) {
 }
 
 export async function fetchJsonSafe(url, options = {}) {
-  // Grab the API key stored by the Settings Page
-  const apiKey = localStorage.getItem('API_KEY') || import.meta.env.VITE_API_KEY || '';
+  // Prefer explicitly provided header, then local storage, then build-time fallback.
+  const explicitHeaderKey = options.headers?.['x-api-key'] || options.headers?.['X-API-KEY'] || '';
+  const apiKey = String(explicitHeaderKey || localStorage.getItem('API_KEY') || import.meta.env.VITE_API_KEY || '').trim();
   
   const finalOptions = {
     ...options,
