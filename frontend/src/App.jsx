@@ -21,6 +21,9 @@ export default function App() {
   }, [darkMode]);
 
   useEffect(() => {
+    const storedApiKey = localStorage.getItem('API_KEY') || '';
+    if (storedApiKey) setApiKey(storedApiKey);
+
     (async () => {
       const providersResult = await fetchJsonSafe('/api/providers');
       if (providersResult.response.ok) {
@@ -37,6 +40,12 @@ export default function App() {
           inventoryCsvUrl: catalogResult.data.inventoryCsvUrl || '',
           arrangementCsvUrl: catalogResult.data.arrangementCsvUrl || '',
         });
+      }
+
+      const settingsResult = await fetchJsonSafe('/api/settings');
+      if (settingsResult.response.ok && settingsResult.data?.apiKey && !storedApiKey) {
+        setApiKey(settingsResult.data.apiKey);
+        localStorage.setItem('API_KEY', settingsResult.data.apiKey);
       }
     })();
   }, []);
