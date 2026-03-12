@@ -1,11 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { OpenAI } = require('openai');
 const {
   API_KEY,
-  OPENAI_API_KEY,
   QWEN_API_KEY,
+  CHATGPT_MODEL,
+  QWEN_MODEL,
   GOOGLE_SHEETS_CSV_URL,
   ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
@@ -24,14 +24,20 @@ app.use(express.static(path.join(__dirname, '../public')));
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY });
 
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
 
-function sanitizeStringArray(value) {
+const DEFAULT_FORBIDDEN_NEW = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'used'];
+const DEFAULT_FORBIDDEN_USED = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'new'];
+const DEFAULT_DYNAMIC_RESPONSES = ['Available', 'Available chief', 'Available boss'];
+
+function sanitizeStringArray(value, { lowerCase = false } = {}) {
   if (!Array.isArray(value)) return [];
-  return value.map((v) => String(v || '').trim()).filter(Boolean);
+  return value
+    .map((v) => String(v || '').trim())
+    .filter(Boolean)
+    .map((v) => (lowerCase ? v.toLowerCase() : v));
 }
 
 function resolveExpectedApiKey() {
@@ -43,7 +49,33 @@ function isAuthorized(req) {
   return incoming === resolveExpectedApiKey();
 }
 
-// ─── DASHBOARD ENDPOINTS (RESTORED) ───────────────────────────────────────
+function buildWebhookPrompt({ newDevices, usedDevices, forbiddenNew, forbiddenUsed }) {
+  return `You are a JSON-based entity extractor for an availability checker.
+Your SOLE purpose is to analyze the user's message and return a JSON object.
+Do not add any other text, conversation, or explanations.
+
+First, determine the category: 'new' or 'used'. If the message contains 'used', the category is 'used'. Otherwise, default to 'new'.
+
+Based on the category, use the appropriate lists:
+
+List of NEW devices: ${newDevices.join(', ')}
+List of NEW forbidden phrases: ${forbiddenNew.join(', ')}
+
+List of USED devices: ${usedDevices.join(', ')}
+List of USED forbidden phrases: ${forbiddenUsed.join(', ')}
+
+Return JSON in this exact format:
+{"device": string | null, "forbidden": string | null, "category": "new" | "used"}
+
+RULES:
+1. "device": Find the first item from the active device list that is the closest match to the user's request. The string you return MUST be spelled exactly as it appears in the list.
+2. "forbidden": Find the first matching forbidden phrase from the active list. The string MUST be spelled exactly as it appears in the list. If no forbidden phrase is found, this MUST be null.
+3. "category": The category you detected ('new' or 'used').
+4. PRIORITY: A message can have BOTH a device and a forbidden phrase. Find both.
+5. "esim" EXCEPTION: The phrase "esim" is only forbidden if the message does not also mention "physical". If the message contains "physical" (or "physical sim") and "esim", it is considered "physical" and "esim" should not be listed as forbidden.`;
+}
+
+// ─── DASHBOARD ENDPOINTS ──────────────────────────────────────────────────
 app.get('/api/providers', async (req, res) => {
   const saved = await settingsStore.getSettings();
   res.json({
@@ -51,8 +83,12 @@ app.get('/api/providers', async (req, res) => {
     activeProvider: saved.activeProvider || providerService.getActiveProvider(),
     envKeysLoaded: {
       API_KEY: Boolean(process.env.API_KEY),
-      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT),
       QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
+    },
+    models: {
+      chatgpt: CHATGPT_MODEL,
+      qwen: QWEN_MODEL,
     },
   });
 });
@@ -119,7 +155,9 @@ app.post('/api/dictionary', async (req, res) => {
   try {
     await processor.upsertDictionary(req.body || {});
     res.json({ success: true });
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.delete('/api/dictionary/:id', async (req, res) => {
@@ -133,25 +171,27 @@ app.get('/api/requests', async (req, res) => {
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
     res.json({ requests: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
-  } catch(e) { res.json({ requests: [] }); }
+  } catch {
+    res.json({ requests: [] });
+  }
 });
 
-// ─── THE MISSING ANALYTICS ENDPOINT ───────────────────────────────────────
 app.get('/api/clean-analytics', async (req, res) => {
   const timeframe = String(req.query.timeframe || '1m').toLowerCase();
   const now = Date.now();
   const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
-  let devices = [], customers = [];
+  let devices = [];
+  let customers = [];
   if (firestore) {
     try {
       const [aSnap, cSnap] = await Promise.all([
         firestore.collection('ar_analytics').orderBy('requestCount', 'desc').get(),
-        firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get()
+        firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get(),
       ]);
       devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
       customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
     } catch (e) {
-      console.error("Firebase analytics read error:", e.message);
+      console.error('Firebase analytics read error:', e.message);
     }
   }
   res.json({ devices, customers, timeframe });
@@ -161,78 +201,69 @@ app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, sett
 
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
-// ─── THE BULLETPROOF WEBHOOK ──────────────────────────────────────────────
 app.post('/api/respond', async (req, res) => {
-  console.log(`\n🔔 [WEBHOOK ATTACK] Request hit the server!`);
-  console.log(`🔑 Key Provided:`, req.headers['x-api-key'] || req.query.key || 'NONE');
+  console.log('\n🔔 Incoming /api/respond request');
+  console.log('🔑 Key Provided:', req.headers['x-api-key'] || req.query.key || 'NONE');
 
   if (!isAuthorized(req)) {
-    console.log(`🚫 [BLOCKED] Unauthorized Request. Server expects: ${resolveExpectedApiKey()}`);
+    console.log(`🚫 Unauthorized request. Server expects key: ${resolveExpectedApiKey()}`);
     return res.sendStatus(403);
   }
 
   const userMessage = String(req.body?.senderMessage || '').trim();
   if (!userMessage) {
-    console.log(`⚠️ [BLOCKED] Missing 'senderMessage' in body.`);
     return res.status(400).json({ error: 'Missing senderMessage' });
   }
-
-  console.log(`📥 INCOMING MESSAGE: "${userMessage}"`);
 
   try {
     const settings = await settingsStore.getSettings();
 
-    // Load Live Catalog & Settings safely
-    const NEW_DEVICES = (catalog.supportedNewDevices && catalog.supportedNewDevices.length) ? catalog.supportedNewDevices : ['iphone 13 pro max'];
-    const USED_DEVICES = (catalog.supportedUsedDevices && catalog.supportedUsedDevices.length) ? catalog.supportedUsedDevices : ['iphone 13 pro max'];
-    
-    let FORBIDDEN_NEW = sanitizeStringArray(settings.forbiddenNewPhrases);
-    if (!FORBIDDEN_NEW.length) FORBIDDEN_NEW = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
-    
-    let FORBIDDEN_USED = sanitizeStringArray(settings.forbiddenUsedPhrases);
-    if (!FORBIDDEN_USED.length) FORBIDDEN_USED = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'NEW'];
-    
-    let DYNAMIC_RESPONSES = sanitizeStringArray(settings.dynamicResponses);
-    if (!DYNAMIC_RESPONSES.length) DYNAMIC_RESPONSES = ["Available", "Available chief", "Available boss"];
+    const newDevices = catalog.getNewDevices();
+    const usedDevices = catalog.getUsedDevices();
 
-    const prompt = `You are a JSON-based entity extractor. Return JSON ONLY.
-Category: If message contains 'used', category is 'used'. Else 'new'.
-List of NEW devices: ${NEW_DEVICES.join(', ')}
-List of NEW forbidden phrases: ${FORBIDDEN_NEW.join(', ')}
-List of USED devices: ${USED_DEVICES.join(', ')}
-List of USED forbidden phrases: ${FORBIDDEN_USED.join(', ')}
+    const activeNewDevices = newDevices.length ? newDevices : ['iphone 13 pro max'];
+    const activeUsedDevices = usedDevices.length ? usedDevices : ['iphone 13 pro max'];
 
-Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
-RULES: "device" must perfectly match a string in the active list. "forbidden" must perfectly match a phrase in the active list. Both can be found. Exception: 'esim' is not forbidden if 'physical' is also in the message.`;
+    const forbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases, { lowerCase: true });
+    const forbiddenUsed = sanitizeStringArray(settings.forbiddenUsedPhrases, { lowerCase: true });
+    const activeForbiddenNew = forbiddenNew.length ? forbiddenNew : DEFAULT_FORBIDDEN_NEW;
+    const activeForbiddenUsed = forbiddenUsed.length ? forbiddenUsed : DEFAULT_FORBIDDEN_USED;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'system', content: prompt }, { role: 'user', content: userMessage }],
-      response_format: { type: "json_object" },
-      temperature: 0,
+    const dynamicResponses = sanitizeStringArray(settings.dynamicResponses);
+    const activeResponses = dynamicResponses.length ? dynamicResponses : DEFAULT_DYNAMIC_RESPONSES;
+
+    const provider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
+    providerService.setActiveProvider(provider);
+
+    const prompt = buildWebhookPrompt({
+      newDevices: activeNewDevices,
+      usedDevices: activeUsedDevices,
+      forbiddenNew: activeForbiddenNew,
+      forbiddenUsed: activeForbiddenUsed,
     });
 
-    const aiResponse = JSON.parse(completion.choices[0].message.content);
-    const { category, device, forbidden } = aiResponse;
-    const foundDevice = device ? device.toLowerCase() : null;
-    const foundForbidden = forbidden ? forbidden.toLowerCase() : null;
+    const rawProviderResult = await providerService.runProvider(provider, prompt, userMessage);
+    const aiResponse = JSON.parse(rawProviderResult || '{}');
 
-    const activeSupportedList = (category === 'used') ? USED_DEVICES : NEW_DEVICES;
-    const activeForbiddenList = (category === 'used') ? FORBIDDEN_USED : FORBIDDEN_NEW;
+    const category = aiResponse.category === 'used' ? 'used' : 'new';
+    const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
+    const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+
+    const activeSupportedList = category === 'used' ? activeUsedDevices : activeNewDevices;
+    const activeForbiddenList = category === 'used' ? activeForbiddenUsed : activeForbiddenNew;
 
     let finalResponse = null;
 
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
     } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      finalResponse = DYNAMIC_RESPONSES[responseIndex % DYNAMIC_RESPONSES.length];
-      responseIndex++;
-      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
+      finalResponse = activeResponses[responseIndex % activeResponses.length];
+      responseIndex += 1;
+      console.log(`✅ Match found: ${foundDevice}; reply: ${finalResponse}`);
     } else {
-      console.log(`🤷 No match or forbidden phrase found.`);
+      console.log('🤷 No matching supported device.');
     }
 
-    // Process Analytics via the Dictionary & Processor system
     setImmediate(async () => {
       try {
         await processor.saveRawRequest({
@@ -240,22 +271,20 @@ RULES: "device" must perfectly match a string in the active list. "forbidden" mu
           senderMessage: userMessage,
           aiCategory: category,
           aiDeviceMatch: foundDevice,
-          replied: !!finalResponse,
+          replied: Boolean(finalResponse),
           timestamp: Date.now(),
           processed: false,
         });
-      } catch (err) { console.error('Failed to log request to processor:', err.message); }
+      } catch (err) {
+        console.error('Failed to log request:', err.message);
+      }
     });
 
-    if (finalResponse) {
-      return res.json({ data: [{ message: finalResponse }] });
-    } else {
-      return res.sendStatus(204);
-    }
-
+    if (finalResponse) return res.json({ data: [{ message: finalResponse }] });
+    return res.sendStatus(204);
   } catch (err) {
-    console.error('💥 Webhook Server error:', err.message);
-    return res.status(500).json({ error: 'Server error' });
+    console.error('💥 Webhook server error:', err.message);
+    return res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
@@ -264,11 +293,11 @@ app.get('*', (req, res) => {
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// ─── INITIALIZATION ──────────────────────────────────────────────────────────
 (async () => {
   try {
     const settings = await settingsStore.getSettings();
     runtimeApiKey = settings.apiKey || runtimeApiKey;
+    providerService.setActiveProvider(String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase());
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();

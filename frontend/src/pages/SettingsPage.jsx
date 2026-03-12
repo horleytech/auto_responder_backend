@@ -29,10 +29,19 @@ export default function SettingsPage({ apiKey, setApiKey, providerState, setProv
   }
 
   async function saveApiFallback() {
+    const cleanApiKey = apiKey.trim();
     const { response } = await fetchJsonSafe('/api/settings', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ apiKey }),
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ apiKey: cleanApiKey }),
     });
-    setStatus(response.ok ? 'API key fallback saved to Firebase settings.' : `API key save failed (${response.status})`);
+
+    if (response.ok) {
+      if (cleanApiKey) localStorage.setItem('API_KEY', cleanApiKey);
+      else localStorage.removeItem('API_KEY');
+      setStatus('API key fallback saved to Firebase settings.');
+      return;
+    }
+
+    setStatus(`API key save failed (${response.status})`);
   }
 
   async function runMaintenance(path) {
