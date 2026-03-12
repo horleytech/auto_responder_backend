@@ -1,25 +1,20 @@
 const admin = require('firebase-admin');
-require('dotenv').config(); // Force it to read .env directly
+const path = require('path');
+const fs = require('fs');
 
 function initFirestore() {
-  // 1. Grab the JSON string from either variable name
-  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT;
-  
-  if (!rawJson) {
-    console.error('❌ FIREBASE ERROR: Missing Firebase JSON in .env file!');
-    return null;
-  }
-
   try {
-    // 2. Parse the JSON
-    const serviceAccount = JSON.parse(rawJson);
+    // Look for the firebase.json file in the root folder
+    const keyPath = path.join(__dirname, '../../firebase.json');
     
-    // 3. Fix newline characters in the private key (Crucial for dotenv)
-    if (serviceAccount.private_key) {
-      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    if (!fs.existsSync(keyPath)) {
+      console.error('❌ FIREBASE ERROR: firebase.json file not found in the root directory!');
+      return null;
     }
 
-    // 4. Initialize Firebase
+    // Require automatically parses the JSON perfectly without crashing
+    const serviceAccount = require(keyPath);
+
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
@@ -31,7 +26,7 @@ function initFirestore() {
     return db;
 
   } catch (err) {
-    console.error('❌ Firebase JSON Parsing Error. Your .env file is formatted wrong:', err.message);
+    console.error('❌ Firebase Connection Error:', err.message);
     return null;
   }
 }
