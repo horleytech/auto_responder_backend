@@ -1,37 +1,45 @@
 const admin = require('firebase-admin');
-const { FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_PROJECT_ID } = require('../config/env');
-
-function parseServiceAccount() {
-  if (!FIREBASE_SERVICE_ACCOUNT_JSON) return null;
-  try {
-    const parsed = JSON.parse(FIREBASE_SERVICE_ACCOUNT_JSON);
-    if (parsed.private_key) parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
-    return parsed;
-  } catch {
-    return null;
-  }
-}
+require('dotenv').config(); // Force it to read .env directly
 
 function initFirestore() {
-  const serviceAccount = parseServiceAccount();
-  if (!serviceAccount) return null;
+  // 1. Grab the JSON string from either variable name
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT;
+  
+  if (!rawJson) {
+    console.error('❌ FIREBASE ERROR: Missing Firebase JSON in .env file!');
+    return null;
+  }
 
   try {
+    // 2. Parse the JSON
+    const serviceAccount = JSON.parse(rawJson);
+    
+    // 3. Fix newline characters in the private key (Crucial for dotenv)
+    if (serviceAccount.private_key) {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
+
+    // 4. Initialize Firebase
     if (!admin.apps.length) {
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: FIREBASE_PROJECT_ID || serviceAccount.project_id,
+        credential: admin.credential.cert(serviceAccount)
       });
     }
-    return admin.firestore();
+    
+    const db = admin.firestore();
+    console.log('🔥 Firebase Database connected successfully!');
+    return db;
+
   } catch (err) {
-    console.error('⚠️ Firebase init failed, using memory fallback:', err.message);
+    console.error('❌ Firebase JSON Parsing Error. Your .env file is formatted wrong:', err.message);
     return null;
   }
 }
+
+const firestore = initFirestore();
 
 module.exports = {
   admin,
-  firestore: initFirestore(),
-  FieldValue: admin.firestore.FieldValue,
+  firestore,
+  FieldValue: admin.firestore ? admin.firestore.FieldValue : null,
 };
