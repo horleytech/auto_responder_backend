@@ -68,58 +68,8 @@ const FORBIDDEN_USED_PHRASES = [
   'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
 ].map((p) => p.toLowerCase());
 
-const DEFAULT_FORBIDDEN_NEW_PHRASES = [...FORBIDDEN_NEW_PHRASES];
-const DEFAULT_FORBIDDEN_USED_PHRASES = [...FORBIDDEN_USED_PHRASES];
-const DEFAULT_DYNAMIC_RESPONSES = [...DYNAMIC_RESPONSES];
-
 let SUPPORTED_NEW_DEVICES = [];
 let SUPPORTED_USED_DEVICES = [];
-
-// Forbidden phrases (original)
-const FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-].map((p) => p.toLowerCase());
-
-const FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-].map((p) => p.toLowerCase());
-
-let SUPPORTED_NEW_DEVICES = [];
-let SUPPORTED_USED_DEVICES = [];
-
-// Forbidden phrases (original)
-const FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-].map((p) => p.toLowerCase());
-
-const FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-].map((p) => p.toLowerCase());
-
-let SUPPORTED_NEW_DEVICES = [];
-let SUPPORTED_USED_DEVICES = [];
-
-// Forbidden phrases (original)
-const FORBIDDEN_NEW_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used',
-].map((p) => p.toLowerCase());
-
-const FORBIDDEN_USED_PHRASES = [
-  'esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box',
-  'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW',
-].map((p) => p.toLowerCase());
-
-let SUPPORTED_NEW_DEVICES = [];
-let SUPPORTED_USED_DEVICES = [];
-
-const DEFAULT_FORBIDDEN_NEW = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'used'];
-const DEFAULT_FORBIDDEN_USED = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'new'];
-const DEFAULT_DYNAMIC_RESPONSES = ['Available', 'Available chief', 'Available boss'];
 
 function sanitizeStringArray(value, { lowerCase = false } = {}) {
   if (!Array.isArray(value)) return [];
