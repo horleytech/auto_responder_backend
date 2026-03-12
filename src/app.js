@@ -1,10 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { OpenAI } = require('openai');
 const {
   API_KEY,
-  OPENAI_API_KEY,
   QWEN_API_KEY,
   GOOGLE_SHEETS_CSV_URL,
   ARRANGEMENT_MAP_CSV_URL,
@@ -26,8 +24,6 @@ const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 
 const RUNTIME_API_KEY = String(process.env.API_KEY || API_KEY || '').trim();
-const RUNTIME_OPENAI_KEY = String(process.env.OPENAI_CHATGPT || process.env.OPENAI_API_KEY || OPENAI_API_KEY || '').trim();
-const openai = RUNTIME_OPENAI_KEY ? new OpenAI({ apiKey: RUNTIME_OPENAI_KEY }) : null;
 
 // Dynamic response pool (original)
 const DYNAMIC_RESPONSES = [
@@ -181,7 +177,7 @@ async function logRawToFirebase({ req, userMessage, category, foundDevice, found
       replied: Boolean(finalResponse),
       responseMessage: finalResponse || null,
       error: error || null,
-      provider: 'chatgpt',
+      provider: providerService.getActiveProvider(),
       timestamp: Date.now(),
       processed: false,
       rawPayload: req.body || {},
@@ -199,7 +195,7 @@ app.get('/api/providers', async (req, res) => {
     activeProvider: saved.activeProvider || providerService.getActiveProvider(),
     envKeysLoaded: {
       API_KEY: Boolean(process.env.API_KEY),
-      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT),
       QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
     },
   });
@@ -332,33 +328,23 @@ app.post('/api/respond', async (req, res) => {
     return res.status(400).json({ error: 'Missing senderMessage' });
   }
 
-  if (!openai) {
-    await logRawToFirebase({ req, userMessage, error: 'Missing OPENAI_CHATGPT / OPENAI_API_KEY in environment' });
-    return res.status(500).json({ error: 'Missing OPENAI_CHATGPT / OPENAI_API_KEY in environment' });
-  }
-
   let category = null;
   let foundDevice = null;
   let foundForbidden = null;
   let finalResponse = null;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: getSystemPrompt() },
-        { role: 'user', content: userMessage },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0,
-    });
+    const settings = await settingsStore.getSettings();
+    const provider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
+    providerService.setActiveProvider(provider);
 
     let aiResponse;
     try {
-      aiResponse = JSON.parse(completion.choices[0].message.content);
+      const rawResponse = await providerService.runProvider(provider, getSystemPrompt(), userMessage);
+      aiResponse = JSON.parse(rawResponse);
     } catch {
-      await logRawToFirebase({ req, userMessage, error: 'AI response was not valid JSON' });
-      return res.status(500).json({ error: 'AI response was not valid JSON' });
+      await logRawToFirebase({ req, userMessage, error: 'AI response was not valid JSON or provider not configured' });
+      return res.status(500).json({ error: 'AI response was not valid JSON or provider not configured' });
     }
 
     category = aiResponse.category;
