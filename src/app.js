@@ -1,269 +1,211 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
-const {
-  API_KEY,
-  OPENAI_API_KEY,
-  QWEN_API_KEY,
-  CUSTOM_RESPONSE,
-  DEFAULT_AI_PROVIDER,
-  GOOGLE_SHEETS_CSV_URL,
-  ARRANGEMENT_MAP_CSV_URL,
-} = require('./config/env');
-const { firestore, FieldValue } = require('./services/firebaseService');
-const { createCatalogService } = require('./services/catalogService');
-const { createProviderService } = require('./services/providerService');
-const settingsStore = require('./services/settingsStore');
-const { createProcessor } = require('./services/processor');
-const { createMaintenanceRouter } = require('./controllers/maintenance');
+const { OpenAI } = require('openai');
+require('dotenv').config();
+const axios = require('axios');
+const admin = require('firebase-admin');
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(cors());
+app.use(express.json());
 
-const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
-const providerService = createProviderService();
-const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
+// ─── Configuration ────────────────────────────────────────────────────────────
+const API_KEY = process.env.API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_CHATGPT;
 
-let responseIndex = 0;
-let runtimeApiKey = process.env.API_KEY || API_KEY;
-
-function sanitizeStringArray(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((v) => String(v || '').trim()).filter(Boolean);
+if (!API_KEY || !OPENAI_API_KEY) {
+  console.error('❌ Missing API_KEY or OPENAI_CHATGPT in .env');
+  process.exit(1);
 }
 
-function resolveExpectedApiKey() {
-  return process.env.API_KEY || runtimeApiKey || API_KEY;
-}
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-function isAuthorized(req) {
-  const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
-  return incoming && incoming === resolveExpectedApiKey();
-}
-
-function getDynamicResponse(settings) {
-  const pool = sanitizeStringArray(settings?.dynamicResponses);
-  const next = pool[responseIndex % pool.length] || CUSTOM_RESPONSE;
-  responseIndex += 1;
-  return next;
-}
-
-function getSystemPrompt(settings = {}) {
-  const forbiddenNewPhrases = sanitizeStringArray(settings.forbiddenNewPhrases);
-  const forbiddenUsedPhrases = sanitizeStringArray(settings.forbiddenUsedPhrases);
-
-  return `You are a fast gatekeeper classifier. Return ONLY JSON: {"category":"new|used","blocked":boolean,"forbidden":string|null,"device":string|null}.\nForbidden NEW: ${forbiddenNewPhrases.join(', ')}\nForbidden USED: ${forbiddenUsedPhrases.join(', ')}\nRules: if message contains used/uk used then category=used else new. 'esim' is only forbidden when physical/physical sim is absent. device is the likely requested item phrase.`;
-}
-
-async function runLayer1(provider, senderMessage, settings, overrides = {}) {
-  try {
-    const raw = await providerService.runProvider(provider, getSystemPrompt(settings), senderMessage, overrides);
-    const parsed = JSON.parse(raw || '{}');
-    return {
-      category: parsed.category === 'used' ? 'used' : 'new',
-      blocked: Boolean(parsed.blocked),
-      forbidden: parsed.forbidden || null,
-      device: parsed.device || null,
-    };
-  } catch {
-    const lower = String(senderMessage || '').toLowerCase();
-    const category = lower.includes('used') ? 'used' : 'new';
-    const forbiddenNewPhrases = sanitizeStringArray(settings?.forbiddenNewPhrases);
-    const forbiddenUsedPhrases = sanitizeStringArray(settings?.forbiddenUsedPhrases);
-    const banned = (category === 'used' ? forbiddenUsedPhrases : forbiddenNewPhrases).map((x) => x.toLowerCase());
-    const forbidden = banned.find((term) => lower.includes(term.toLowerCase()));
-    return { category, blocked: Boolean(forbidden), forbidden: forbidden || null, device: null };
-  }
-}
-
-app.get('/api/providers', async (req, res) => {
-  const saved = await settingsStore.getSettings();
-  res.json({
-    ...providerService.listProviders(),
-    activeProvider: saved.activeProvider || providerService.getActiveProvider(),
-    envKeysLoaded: {
-      API_KEY: Boolean(process.env.API_KEY),
-      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
-      QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
-    },
-  });
-});
-
-
-app.get('/api/settings', async (req, res) => {
-  const settings = await settingsStore.getSettings();
-  res.json(settings);
-});
-
-app.post('/api/settings', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  const nextApiKey = String(req.body?.apiKey || '').trim();
-  if (nextApiKey) {
-    runtimeApiKey = nextApiKey;
-  }
-  await settingsStore.updateSettings(req.body || {});
-  res.json({ success: true });
-});
-app.post('/api/providers', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  const provider = String(req.body?.provider || '').toLowerCase().trim();
-  if (!['chatgpt', 'qwen'].includes(provider)) return res.status(400).json({ error: 'Unsupported provider.' });
-  providerService.setActiveProvider(provider);
-  await settingsStore.updateSettings({ activeProvider: provider });
-  res.json({ success: true, activeProvider: provider });
-});
-
-app.get('/api/catalog-source', (req, res) => {
-  res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
-});
-
-app.post('/api/catalog-source', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  catalog.setInventoryCsvUrl(String(req.body?.inventoryCsvUrl || '').trim());
-  catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
-  const loaded = await catalog.loadCatalog();
-  if (!loaded.success) return res.status(400).json(loaded);
-  await settingsStore.updateSettings({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
-  return res.json({ success: true, ...loaded });
-});
-
-app.get('/api/bot-logic', async (req, res) => {
-  const settings = await settingsStore.getSettings();
-  res.json({
-    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
-    dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
-  });
-});
-
-app.post('/api/bot-logic', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  const next = {
-    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
-    dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
-  };
-  if (!next.forbiddenNewPhrases.length || !next.forbiddenUsedPhrases.length || !next.dynamicResponses.length) {
-    return res.status(400).json({ error: 'All arrays are required.' });
-  }
-  await settingsStore.updateSettings(next);
-  return res.json({ success: true, ...next });
-});
-
-app.get('/api/dictionary', async (req, res) => {
-  const rows = await processor.listDictionary();
-  res.json({ dictionary: rows });
-});
-
-app.post('/api/dictionary', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  try {
-    await processor.upsertDictionary(req.body || {});
-    res.json({ success: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/dictionary/:id', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  await processor.deleteDictionary(req.params.id);
-  res.json({ success: true });
-});
-
-app.get('/api/requests', async (req, res) => {
-  if (!firestore) return res.json({ requests: [] });
-
-  const snap = await firestore
-    .collection('ar_raw_requests')
-    .orderBy('timestamp', 'desc')
-    .limit(50)
-    .get();
-
-  const requests = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  res.json({ requests });
-});
-
-app.get('/api/clean-analytics', async (req, res) => {
-  const timeframe = String(req.query.timeframe || '1m').toLowerCase();
-  const now = Date.now();
-  const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
-
-  let devices = [];
-  let customers = [];
-
-  if (firestore) {
-    const [aSnap, cSnap] = await Promise.all([firestore.collection('ar_analytics').orderBy('requestCount', 'desc').get(), firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get()]);
-    devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
-    customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
-  }
-
-  res.json({ devices, customers, timeframe });
-});
-
-app.post('/api/respond', async (req, res) => {
-  const authorized = isAuthorized(req);
-  if (!authorized) return res.sendStatus(403);
-
-  const settings = await settingsStore.getSettings();
-  const provider = String(req.body?.provider || settings.activeProvider || providerService.getActiveProvider()).toLowerCase();
-  const senderMessage = String(req.body?.senderMessage || '').trim();
-  if (!senderMessage) return res.status(400).json({ error: 'Missing senderMessage' });
-  console.log('📥 Incoming WhatsApp Webhook:', senderMessage);
-
-  const layer1 = await runLayer1(provider, senderMessage, settings, {
-    openAiKey: req.body?.OPENAI_API_KEY,
-    qwenKey: req.body?.QWEN_API_KEY,
-  });
-
-  const message = layer1.blocked ? '' : getDynamicResponse(settings);
-  console.log('📤 AI Response:', message, '| Category:', layer1.category);
-  res.status(200).json({ data: [{ message }], category: layer1.category, blocked: layer1.blocked });
-
-  setImmediate(async () => {
-    try {
-      await processor.saveRawRequest({
-        senderId: req.body?.senderId || 'Unknown',
-        senderMessage,
-        aiCategory: layer1.category,
-        aiDeviceMatch: layer1.device || null,
-        timestamp: Date.now(),
-        processed: false,
-      });
-    } catch (err) {
-      console.error('Failed to save raw request:', err.message);
+// ─── Firebase Initialization ──────────────────────────────────────────────────
+let db = null;
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    if (!admin.apps.length) {
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
-  });
+    db = admin.firestore();
+    console.log('🔥 Firebase initialized successfully.');
+  }
+} catch (error) {
+  console.error('❌ Firebase initialization failed:', error.message);
+}
+
+// ─── Bot Logic (Default Fallbacks) ────────────────────────────────────────────
+let DYNAMIC_RESPONSES = [
+  "Available", "Available chief", "Available big chief", "Available my Oga",
+  "Big chief, this is available", "Available boss", "Available boss, we get am",
+  "Available my guy", "My Oga, it's available"
+];
+let FORBIDDEN_NEW_PHRASES = ['esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box', 'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'UK', 'Air', 'Used'].map(p => p.toLowerCase());
+let FORBIDDEN_USED_PHRASES = ['esim', 'locked', 'idm', 'wifi only', 'screen', 'Any iPhone lower than iPhone 16 series', 'lock', 'converted', 'lla', 'open box', 'no face id', 'chip', '1tb', '1 terabyte', 'iPhone 8', 'iPhone 7', 'charging port', 'icloud', 'panel', 'NFID', 'NEW'].map(p => p.toLowerCase());
+let responseIndex = 0;
+
+// Load live logic from Firebase if available
+async function loadBotLogic() {
+  if (!db) return;
+  try {
+    const doc = await db.collection('ar_settings').doc('botLogic').get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (data.dynamicResponses) DYNAMIC_RESPONSES = data.dynamicResponses;
+      if (data.forbiddenNew) FORBIDDEN_NEW_PHRASES = data.forbiddenNew.map(p => p.toLowerCase());
+      if (data.forbiddenUsed) FORBIDDEN_USED_PHRASES = data.forbiddenUsed.map(p => p.toLowerCase());
+      console.log('✅ Live Bot Logic loaded from Firebase.');
+    }
+  } catch (error) {
+    console.error('Failed to load bot logic:', error);
+  }
+}
+loadBotLogic();
+
+// ─── Google Sheets Catalog ───────────────────────────────────────────────────
+const GOOGLE_SHEETS_CSV_URL = 'https://docs.google.com/spreadsheets/d/1Jh7TXif0dsaAVgoExEOCmkACZHPPZqIsiW4hH8T5Pts/export?format=csv';
+let SUPPORTED_NEW_DEVICES = [];
+let SUPPORTED_USED_DEVICES = [];
+
+function normalizeDeviceName(deviceType) {
+  if (!deviceType) return null;
+  return deviceType.toLowerCase().replace(/galaxy /gi, '').replace(/\s+/g, ' ').replace(/pro max/g, 'pro max').replace(/iphone /gi, 'iphone ').trim();
+}
+
+function isUsedCondition(condition) {
+  if (!condition) return false;
+  return condition.toLowerCase().includes('used') || condition.toLowerCase().includes('grade a');
+}
+
+async function loadCatalogFromGoogleSheets() {
+  try {
+    const response = await axios.get(GOOGLE_SHEETS_CSV_URL);
+    const lines = response.data.split('\n').filter(line => line.trim() !== '');
+    const rows = lines.map(line => line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(cell => cell.replace(/^"(.*)"$/, '$1').trim()));
+    
+    const headers = rows[0];
+    const deviceIndex = headers.indexOf('Device Type');
+    const conditionIndex = headers.indexOf('Condition');
+    const priceIndex = headers.indexOf('Regular price');
+
+    const newSet = new Set(), usedSet = new Set();
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.length <= Math.max(deviceIndex, conditionIndex, priceIndex)) continue;
+      const deviceType = row[deviceIndex], condition = row[conditionIndex], price = row[priceIndex];
+      if (!deviceType || !price || price.startsWith('#') || price === '') continue;
+
+      const normalized = normalizeDeviceName(deviceType);
+      if (!normalized) continue;
+      isUsedCondition(condition) ? usedSet.add(normalized) : newSet.add(normalized);
+    }
+    SUPPORTED_NEW_DEVICES = Array.from(newSet);
+    SUPPORTED_USED_DEVICES = Array.from(usedSet);
+    console.log(`✅ Catalog Loaded: ${SUPPORTED_NEW_DEVICES.length} new, ${SUPPORTED_USED_DEVICES.length} used devices.`);
+  } catch (err) {
+    console.error('❌ Failed to load catalog:', err.message);
+  }
+}
+loadCatalogFromGoogleSheets();
+
+// ─── API Endpoints (Bouncer) ────────────────────────────────────────────────
+function isAuthorized(req, res, next) {
+  const providedKey = req.headers['x-api-key'] || req.query.key;
+  if (providedKey === API_KEY) return next();
+  return res.sendStatus(403);
+}
+
+app.get('/api/requests', isAuthorized, async (req, res) => {
+  if (!db) return res.json({ requests: [] });
+  try {
+    const snapshot = await db.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
+    res.json({ requests: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) });
+  } catch (error) { res.status(500).json({ error: 'Failed to fetch logs' }); }
 });
 
-app.use('/api/maintenance', createMaintenanceRouter({
-  firestore,
-  processor,
-  settingsStore,
-  resolveApiKey: resolveExpectedApiKey,
-}));
-
-app.get('/healthz', (req, res) => {
-  res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' });
+app.post('/api/settings', isAuthorized, async (req, res) => {
+  if (!db) return res.status(500).json({ error: 'Firebase not connected' });
+  try {
+    await db.collection('ar_settings').doc('botLogic').set(req.body, { merge: true });
+    await loadBotLogic(); 
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: 'Failed to save settings' }); }
 });
 
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API route not found' });
-  return res.sendFile(path.join(__dirname, '../public/index.html'));
+// ─── MAIN WEBHOOK (YOUR ORIGINAL LOGIC) ──────────────────────────────────────
+app.post('/api/respond', isAuthorized, async (req, res) => {
+  const userMessage = req.body.senderMessage;
+  if (!userMessage) return res.status(400).json({ error: 'Missing senderMessage' });
+
+  console.log(`\n📥 NEW MESSAGE: "${userMessage}"`);
+
+  try {
+    const prompt = `
+You are a JSON-based entity extractor for an availability checker. Return JSON ONLY.
+First, determine category: 'new' or 'used'. If message contains 'used', category is 'used'. Else 'new'.
+List of NEW devices: ${SUPPORTED_NEW_DEVICES.join(', ')}
+List of NEW forbidden phrases: ${FORBIDDEN_NEW_PHRASES.join(', ')}
+List of USED devices: ${SUPPORTED_USED_DEVICES.join(', ')}
+List of USED forbidden phrases: ${FORBIDDEN_USED_PHRASES.join(', ')}
+
+Format: {"device": string | null, "forbidden": string | null, "category": "new" | "used"}
+RULES: 
+1. "device": Closest match from active device list. Must spell exactly as it appears in list.
+2. "forbidden": First matching forbidden phrase.
+3. Exception: 'esim' is not forbidden if 'physical' is also in the message.`.trim();
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'system', content: prompt }, { role: 'user', content: userMessage }],
+      response_format: { type: "json_object" },
+      temperature: 0,
+    });
+
+    const aiResponse = JSON.parse(completion.choices[0].message.content);
+    const { category, device, forbidden } = aiResponse;
+    const foundDevice = device ? device.toLowerCase() : null;
+    const foundForbidden = forbidden ? forbidden.toLowerCase() : null;
+
+    const activeSupportedList = (category === 'used') ? SUPPORTED_USED_DEVICES : SUPPORTED_NEW_DEVICES;
+    const activeForbiddenList = (category === 'used') ? FORBIDDEN_USED_PHRASES : FORBIDDEN_NEW_PHRASES;
+
+    let finalResponse = null;
+
+    // YOUR EXACT ORIGINAL JUDGEMENT
+    if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
+      console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
+    } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
+      finalResponse = DYNAMIC_RESPONSES[responseIndex];
+      responseIndex = (responseIndex + 1) % DYNAMIC_RESPONSES.length;
+      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
+    } else {
+      console.log(`🤷 No match found.`);
+    }
+
+    // FIREBASE LOGGING FOR FRONTEND
+    if (db) {
+      db.collection('ar_raw_requests').add({
+        senderMessage: userMessage,
+        aiCategory: category,
+        aiDeviceMatch: foundDevice,
+        replied: !!finalResponse,
+        timestamp: Date.now(),
+        processed: false
+      }).catch(err => console.error("Firebase error:", err));
+    }
+
+    if (finalResponse) {
+      return res.json({ data: [{ message: finalResponse }] });
+    } else {
+      return res.sendStatus(204);
+    }
+
+  } catch (err) {
+    console.error('💥 Webhook Error:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
-(async () => {
-  const settings = await settingsStore.getSettings();
-  runtimeApiKey = settings.apiKey || runtimeApiKey;
-  const activeProvider = settings.activeProvider || DEFAULT_AI_PROVIDER;
-  providerService.setActiveProvider(activeProvider);
-
-  catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
-  catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
-
-  await catalog.loadCatalog();
-})();
-
-module.exports = app;
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
