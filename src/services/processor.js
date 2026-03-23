@@ -50,7 +50,7 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
 
     const arrangementRows = Object.entries(catalog.getArrangementMap())
       .map(([slang, canonical]) => `${slang} => ${canonical}`)
-      .slice(0, 500)
+      .slice(0, 100)
       .join('\n');
 
     const prompt = `You are a normalization assistant. Return JSON only: {"normalizedName": string|null}.\nMatch the user text to the best exact catalog item using this arrangement map:\n${arrangementRows}`;
