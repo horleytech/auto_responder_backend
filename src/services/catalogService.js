@@ -17,15 +17,68 @@ function isUsedCondition(condition) {
 }
 
 function parseCsv(text) {
-  const lines = String(text)
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== '');
+  const input = String(text ?? '');
+  const rows = [];
+  let currentRow = [];
+  let currentCell = '';
+  let insideQuotedField = false;
+  let atCellStart = true;
 
-  return lines.map((line) =>
-    line
-      .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-      .map((cell) => cell.replace(/^"(.*)"$/, '$1').trim())
-  );
+  const pushCell = () => {
+    currentRow.push(currentCell.trim());
+    currentCell = '';
+    atCellStart = true;
+  };
+
+  const pushRow = () => {
+    if (currentRow.some((cell) => cell !== '')) {
+      rows.push(currentRow);
+    }
+    currentRow = [];
+  };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    const nextChar = input[i + 1];
+
+    if (char === '"') {
+      if (insideQuotedField) {
+        if (nextChar === '"') {
+          currentCell += '"';
+          i += 1;
+        } else {
+          insideQuotedField = false;
+        }
+      } else if (atCellStart) {
+        insideQuotedField = true;
+      } else {
+        currentCell += char;
+      }
+      continue;
+    }
+
+    if (char === ',' && !insideQuotedField) {
+      pushCell();
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !insideQuotedField) {
+      if (char === '\r' && nextChar === '\n') i += 1;
+      pushCell();
+      pushRow();
+      continue;
+    }
+
+    currentCell += char;
+    atCellStart = false;
+  }
+
+  if (currentCell !== '' || currentRow.length > 0) {
+    pushCell();
+  }
+  pushRow();
+
+  return rows;
 }
 
 function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) {
