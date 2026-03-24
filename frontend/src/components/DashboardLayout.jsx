@@ -21,8 +21,6 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
           <a
             className="mb-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white"
             href="https://scrapebot.horleytech.com/hub"
-            target="_blank"
-            rel="noreferrer"
           >
             <House size={16} /> Home Hub
           </a>
