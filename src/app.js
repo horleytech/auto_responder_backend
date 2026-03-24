@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { OpenAI } = require('openai');
+const crypto = require('crypto');
 const {
   API_KEY, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL,
 } = require('./config/env');
@@ -20,10 +20,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY });
-
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
+const dashboardSessions = new Map();
 
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
@@ -39,6 +38,35 @@ function isAuthorized(req) {
   return incoming === resolveExpectedApiKey();
 }
 
+function parseCookies(req) {
+  const raw = String(req.headers.cookie || '');
+  const cookies = {};
+  raw.split(';').forEach((part) => {
+    const [k, ...rest] = part.trim().split('=');
+    if (!k) return;
+    cookies[k] = decodeURIComponent(rest.join('=') || '');
+  });
+  return cookies;
+}
+
+function createDashboardSession(res) {
+  const token = crypto.randomBytes(32).toString('hex');
+  dashboardSessions.set(token, Date.now() + (8 * 60 * 60 * 1000));
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Strict; Path=/${secure}; Max-Age=28800`);
+}
+
+function isDashboardAuthorized(req) {
+  const token = parseCookies(req).dashboard_session;
+  if (!token) return false;
+  const expiresAt = dashboardSessions.get(token);
+  if (!expiresAt || expiresAt < Date.now()) {
+    dashboardSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
 // ─── NEW: SECURE LOGIN ENDPOINT ───────────────────────────────────────────
 app.post('/api/login', (req, res) => {
   const password = String(req.body?.password || '').trim();
@@ -49,29 +77,33 @@ app.post('/api/login', (req, res) => {
   }
 
   if (password === correctPassword) {
-    // If correct, return the master API key to unlock the frontend!
-    res.json({ success: true, apiKey: resolveExpectedApiKey() });
+    createDashboardSession(res);
+    res.json({ success: true });
   } else {
     res.status(401).json({ error: 'Incorrect master password.' });
   }
 });
 
+app.post('/api/logout', (req, res) => {
+  const token = parseCookies(req).dashboard_session;
+  if (token) dashboardSessions.delete(token);
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `dashboard_session=; HttpOnly; SameSite=Strict; Path=/${secure}; Max-Age=0`);
+  res.json({ success: true });
+});
+
 // ─── DASHBOARD ENDPOINTS ──────────────────────────────────────────────────
 app.get('/api/providers', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const saved = await settingsStore.getSettings();
   res.json({
     ...providerService.listProviders(),
     activeProvider: saved.activeProvider || providerService.getActiveProvider(),
-    envKeysLoaded: {
-      API_KEY: Boolean(process.env.API_KEY),
-      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY || process.env.OPENAI_CHATGPT || OPENAI_API_KEY),
-      QWEN_API_KEY: Boolean(process.env.QWEN_API_KEY || QWEN_API_KEY),
-    },
   });
 });
 
 app.post('/api/providers', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
@@ -82,22 +114,24 @@ app.post('/api/providers', async (req, res) => {
   res.json({ success: true, activeProvider: provider });
 });
 
-app.get('/api/settings', async (req, res) => res.json(await settingsStore.getSettings()));
+app.get('/api/settings', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  res.json(await settingsStore.getSettings());
+});
 
 app.post('/api/settings', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
-  const nextApiKey = String(req.body?.apiKey || '').trim();
-  if (nextApiKey) runtimeApiKey = nextApiKey;
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   await settingsStore.updateSettings(req.body || {});
   res.json({ success: true });
 });
 
 app.get('/api/catalog-source', (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
 });
 
 app.post('/api/catalog-source', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   catalog.setInventoryCsvUrl(String(req.body?.inventoryCsvUrl || '').trim());
   catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
   const loaded = await catalog.loadCatalog();
@@ -107,6 +141,7 @@ app.post('/api/catalog-source', async (req, res) => {
 });
 
 app.get('/api/bot-logic', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const settings = await settingsStore.getSettings();
   res.json({
     forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
@@ -116,7 +151,7 @@ app.get('/api/bot-logic', async (req, res) => {
 });
 
 app.post('/api/bot-logic', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const next = {
     forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
@@ -131,12 +166,13 @@ app.post('/api/bot-logic', async (req, res) => {
 });
 
 app.get('/api/dictionary', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const rows = await processor.listDictionary();
   res.json({ dictionary: rows });
 });
 
 app.post('/api/dictionary', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   try {
     await processor.upsertDictionary(req.body || {});
     res.json({ success: true });
@@ -144,12 +180,13 @@ app.post('/api/dictionary', async (req, res) => {
 });
 
 app.delete('/api/dictionary/:id', async (req, res) => {
-  if (!isAuthorized(req)) return res.sendStatus(403);
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   await processor.deleteDictionary(req.params.id);
   res.json({ success: true });
 });
 
 app.get('/api/requests', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   if (!firestore) return res.json({ requests: [] });
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
@@ -158,6 +195,7 @@ app.get('/api/requests', async (req, res) => {
 });
 
 app.get('/api/clean-analytics', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const timeframe = String(req.query.timeframe || '1m').toLowerCase();
   const now = Date.now();
   const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
@@ -175,7 +213,7 @@ app.get('/api/clean-analytics', async (req, res) => {
   res.json({ devices, customers, timeframe });
 });
 
-app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, resolveApiKey: resolveExpectedApiKey }));
+app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized }));
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
 // ─── THE WEBHOOK (UNCHANGED) ──────────────────────────────────────────────
@@ -290,7 +328,6 @@ app.get('*', (req, res) => {
       }
     }
     const settings = await settingsStore.getSettings();
-    runtimeApiKey = settings.apiKey || runtimeApiKey;
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     await catalog.loadCatalog();

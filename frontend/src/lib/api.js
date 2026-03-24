@@ -6,16 +6,12 @@ function withBase(url) {
 }
 
 export async function fetchJsonSafe(url, options = {}) {
-  // Prefer explicitly provided header, then local storage, then build-time fallback.
-  const explicitHeaderKey = options.headers?.['x-api-key'] || options.headers?.['X-API-KEY'] || '';
-  const apiKey = String(explicitHeaderKey || localStorage.getItem('API_KEY') || import.meta.env.VITE_API_KEY || '').trim();
-  
   const finalOptions = {
     ...options,
+    credentials: 'include',
     headers: {
       ...options.headers,
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
     }
   };
 
@@ -29,10 +25,6 @@ export async function fetchJsonSafe(url, options = {}) {
     } catch {
       data = { raw };
     }
-  }
-
-  if (!response.ok && response.status === 403) {
-    console.error('API Error: 403 Forbidden. Is your API Key set in the Settings tab?');
   }
 
   return { response, data };

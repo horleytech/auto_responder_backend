@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
 function toLines(value) {
@@ -12,17 +12,11 @@ function fromLines(value) {
     .filter(Boolean);
 }
 
-export default function BotLogicPage({ apiKey }) {
+export default function BotLogicPage() {
   const [forbiddenNewText, setForbiddenNewText] = useState('');
   const [forbiddenUsedText, setForbiddenUsedText] = useState('');
   const [responsesText, setResponsesText] = useState('');
   const [status, setStatus] = useState('');
-
-  const authHeaders = useMemo(() => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (apiKey.trim()) headers['x-api-key'] = apiKey.trim();
-    return headers;
-  }, [apiKey]);
 
   async function loadBotLogic() {
     const { response, data } = await fetchJsonSafe('/api/bot-logic');
@@ -47,7 +41,6 @@ export default function BotLogicPage({ apiKey }) {
 
     const { response, data } = await fetchJsonSafe('/api/bot-logic', {
       method: 'POST',
-      headers: authHeaders,
       body: JSON.stringify(payload),
     });
 
