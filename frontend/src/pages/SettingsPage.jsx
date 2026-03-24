@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState, envKeysLoaded }) {
+export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState }) {
   const [status, setStatus] = useState('');
   const [showNukeModal, setShowNukeModal] = useState(false);
   const [confirmText, setConfirmText] = useState('');
@@ -38,16 +38,6 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
 
   return (
     <section className="space-y-6">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-premium dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="mb-2 text-xl font-semibold">API Security</h2>
-        <p className="mb-4 text-sm text-slate-500">Keys are loaded from backend environment only. Dashboard auth now uses secure session cookies.</p>
-        <div className="mb-4 grid gap-2 text-xs text-slate-500 md:grid-cols-3">
-          <div>API_KEY: <strong>{envKeysLoaded.API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
-          <div>OPENAI_API_KEY: <strong>{envKeysLoaded.OPENAI_API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
-          <div>QWEN_API_KEY: <strong>{envKeysLoaded.QWEN_API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
-        </div>
-      </div>
-
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="mb-4 text-xl font-semibold">Runtime Configuration</h2>
         <div className="grid gap-4">
@@ -66,8 +56,8 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
             <input className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" value={catalogState.arrangementCsvUrl} onChange={(e) => setCatalogState((p) => ({ ...p, arrangementCsvUrl: e.target.value }))} />
           </label>
           <div className="flex gap-3">
-            <button onClick={saveProvider} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save Provider</button>
-            <button onClick={saveCatalog} className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-white dark:bg-slate-700">Save Catalog Sources</button>
+            <button type="button" onClick={saveProvider} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save Provider</button>
+            <button type="button" onClick={saveCatalog} className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-white dark:bg-slate-700">Save Catalog Sources</button>
           </div>
         </div>
       </div>
@@ -75,9 +65,9 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="mb-4 text-xl font-semibold">Maintenance Controls</h2>
         <div className="flex flex-wrap gap-3">
-          <button onClick={() => runMaintenance('/api/maintenance/sync')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Force Build</button>
-          <button onClick={() => runMaintenance('/api/maintenance/backup')} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white">Log Backup</button>
-          <button onClick={() => setShowNukeModal(true)} className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white">Nuke System</button>
+          <button type="button" onClick={() => runMaintenance('/api/maintenance/sync')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Force Build</button>
+          <button type="button" onClick={() => runMaintenance('/api/maintenance/backup')} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white">Log Backup</button>
+          <button type="button" onClick={() => setShowNukeModal(true)} className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white">Nuke System</button>
         </div>
       </div>
 
@@ -93,8 +83,8 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
               placeholder="Type NUKE"
             />
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setShowNukeModal(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Cancel</button>
-              <button onClick={confirmNuke} className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white">Confirm Nuke</button>
+              <button type="button" onClick={() => setShowNukeModal(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Cancel</button>
+              <button type="button" onClick={confirmNuke} className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white">Confirm Nuke</button>
             </div>
           </div>
         </div>
