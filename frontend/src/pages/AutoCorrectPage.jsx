@@ -10,8 +10,10 @@ export default function AutoCorrectPage() {
 
   async function load() {
     const { response, data } = await fetchJsonSafe('/api/dictionary');
-    if (!response.ok) return setStatus('Failed to load dictionary');
-    setRows(data.dictionary || []);
+    if (!response.ok) return setStatus(`Failed to load dictionary (${response.status})`);
+    const nextRows = data.dictionary || [];
+    setRows(nextRows);
+    setStatus(nextRows.length ? `Loaded ${nextRows.length} mapping(s).` : 'No mappings saved yet.');
   }
 
   function startEdit(row) {
@@ -57,8 +59,8 @@ export default function AutoCorrectPage() {
           <input value={normalizedName} onChange={(e) => setNormalizedName(e.target.value)} placeholder="normalized e.g. iPhone 15 Pro Max" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
         </div>
         <div className="mt-3 flex gap-2">
-          <button onClick={save} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">{editingId ? 'Save Edit' : 'Add Mapping'}</button>
-          {editingId && <button onClick={resetForm} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Cancel Edit</button>}
+          <button type="button" onClick={save} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">{editingId ? 'Save Edit' : 'Add Mapping'}</button>
+          {editingId && <button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Cancel Edit</button>}
         </div>
         <p className="mt-2 text-sm text-slate-500">{status}</p>
       </div>
@@ -70,11 +72,12 @@ export default function AutoCorrectPage() {
             <div key={row.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
               <span>{row.slang} → {row.normalizedName}</span>
               <div className="flex gap-2">
-                <button onClick={() => startEdit(row)} className="rounded-lg bg-slate-700 px-3 py-1 text-xs text-white">Edit</button>
-                <button onClick={() => remove(row.id)} className="rounded-lg bg-rose-600 px-3 py-1 text-xs text-white">Delete</button>
+                <button type="button" onClick={() => startEdit(row)} className="rounded-lg bg-slate-700 px-3 py-1 text-xs text-white">Edit</button>
+                <button type="button" onClick={() => remove(row.id)} className="rounded-lg bg-rose-600 px-3 py-1 text-xs text-white">Delete</button>
               </div>
             </div>
           ))}
+          {!rows.length && <p className="text-sm text-slate-500">No mappings yet. Add one above and it will be saved to Firebase when configured.</p>}
         </div>
       </div>
     </section>

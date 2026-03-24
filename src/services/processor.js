@@ -31,14 +31,18 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function getDictionaryMap() {
-    if (!firestore) return new Map(memoryDictionary);
-    const snap = await firestore.collection('ar_dictionary').get();
-    const dict = new Map();
-    snap.docs.forEach((doc) => {
-      const data = doc.data();
-      const slang = normalizeDeviceName(data.slang);
-      if (slang && data.normalizedName) dict.set(slang, data.normalizedName);
-    });
+    const dict = new Map(memoryDictionary);
+    if (!firestore) return dict;
+    try {
+      const snap = await firestore.collection('ar_dictionary').get();
+      snap.docs.forEach((doc) => {
+        const data = doc.data();
+        const slang = normalizeDeviceName(data.slang);
+        if (slang && data.normalizedName) dict.set(slang, data.normalizedName);
+      });
+    } catch (err) {
+      console.error('⚠️ Failed to read dictionary from Firebase:', err.message);
+    }
     return dict;
   }
 
@@ -141,30 +145,49 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
 
   async function listDictionary() {
     if (!firestore) return Array.from(memoryDictionary.entries()).map(([slang, normalizedName]) => ({ id: slang, slang, normalizedName }));
-    const snap = await firestore.collection('ar_dictionary').orderBy('slang').get();
-    return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    try {
+      const snap = await firestore.collection('ar_dictionary').orderBy('slang').get();
+      const firestoreRows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      firestoreRows.forEach((row) => {
+        const key = normalizeDeviceName(row.slang);
+        if (key && row.normalizedName) memoryDictionary.set(key, row.normalizedName);
+      });
+      return firestoreRows;
+    } catch (err) {
+      console.error('⚠️ Failed to list dictionary from Firebase:', err.message);
+      return Array.from(memoryDictionary.entries()).map(([slang, normalizedName]) => ({ id: slang, slang, normalizedName }));
+    }
   }
 
   async function upsertDictionary(entry) {
     const slang = String(entry.slang || '').trim();
     const normalizedName = String(entry.normalizedName || '').trim();
     if (!slang || !normalizedName) throw new Error('slang and normalizedName are required');
+    const normalizedSlang = normalizeDeviceName(slang);
+    memoryDictionary.set(normalizedSlang, normalizedName);
 
     if (!firestore) {
-      memoryDictionary.set(normalizeDeviceName(slang), normalizedName);
       return;
     }
 
-    const id = normalizeDeviceName(slang).replace(/[^a-z0-9]+/g, '_');
-    await firestore.collection('ar_dictionary').doc(id).set({ slang, normalizedName, updatedAt: Date.now() }, { merge: true });
+    const id = normalizedSlang.replace(/[^a-z0-9]+/g, '_');
+    try {
+      await firestore.collection('ar_dictionary').doc(id).set({ slang, normalizedName, updatedAt: Date.now() }, { merge: true });
+    } catch (err) {
+      console.error('⚠️ Failed to save dictionary mapping to Firebase:', err.message);
+      throw new Error('Saved locally, but Firebase save failed. Check Firebase credentials/permissions.');
+    }
   }
 
   async function deleteDictionary(id) {
-    if (!firestore) {
-      memoryDictionary.delete(id);
-      return;
+    memoryDictionary.delete(normalizeDeviceName(id));
+    if (!firestore) return;
+    try {
+      await firestore.collection('ar_dictionary').doc(id).delete();
+    } catch (err) {
+      console.error('⚠️ Failed to delete dictionary mapping from Firebase:', err.message);
+      throw new Error('Removed locally, but Firebase delete failed. Check Firebase credentials/permissions.');
     }
-    await firestore.collection('ar_dictionary').doc(id).delete();
   }
 
   return {
