@@ -1,4 +1,5 @@
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const DASHBOARD_SESSION_KEY = 'dashboard_session_token';
 
 function withBase(url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -6,12 +7,14 @@ function withBase(url) {
 }
 
 export async function fetchJsonSafe(url, options = {}) {
+  const sessionToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
   const finalOptions = {
     ...options,
     credentials: 'include',
     headers: {
       ...options.headers,
       'Content-Type': 'application/json',
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
     }
   };
 
@@ -27,5 +30,23 @@ export async function fetchJsonSafe(url, options = {}) {
     }
   }
 
+  const normalizedUrl = String(url || '');
+  const isAuthRoute = normalizedUrl.includes('/api/login');
+  if ((response.status === 401 || response.status === 403) && !isAuthRoute) {
+    saveDashboardToken('');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dashboard-auth-expired', { detail: { status: response.status, url: normalizedUrl } }));
+    }
+  }
+
   return { response, data };
+}
+
+export function saveDashboardToken(token) {
+  if (typeof window === 'undefined') return;
+  if (!token) {
+    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }

@@ -10,7 +10,9 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
     const { response, data } = await fetchJsonSafe('/api/providers', {
       method: 'POST', body: JSON.stringify({ provider: providerState.activeProvider }),
     });
-    setStatus(response.ok ? `Saved provider: ${data.activeProvider}` : `Provider save failed (${response.status})`);
+    if (response.ok) return setStatus(`Saved provider: ${data.activeProvider}`);
+    if (response.status === 403) return setStatus('Provider save failed (403). Your admin session expired — log in again.');
+    return setStatus(`Provider save failed (${response.status})`);
   }
 
   async function saveCatalog() {
@@ -18,7 +20,9 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
       method: 'POST',
       body: JSON.stringify({ inventoryCsvUrl: catalogState.inventoryCsvUrl, arrangementCsvUrl: catalogState.arrangementCsvUrl }),
     });
-    setStatus(response.ok ? 'Catalog sources updated.' : `Catalog save failed (${response.status})`);
+    if (response.ok) return setStatus('Catalog sources updated.');
+    if (response.status === 403) return setStatus('Catalog save failed (403). Your admin session expired — log in again.');
+    return setStatus(`Catalog save failed (${response.status})`);
   }
 
   async function runMaintenance(path) {

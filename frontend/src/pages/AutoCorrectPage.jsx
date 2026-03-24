@@ -10,7 +10,7 @@ export default function AutoCorrectPage() {
 
   async function load() {
     const { response, data } = await fetchJsonSafe('/api/dictionary');
-    if (!response.ok) return setStatus(`Failed to load dictionary (${response.status})`);
+    if (!response.ok) return setStatus(response.status === 403 ? 'Session expired. Please log in again.' : `Failed to load dictionary (${response.status})`);
     const nextRows = data.dictionary || [];
     setRows(nextRows);
     setStatus(nextRows.length ? `Loaded ${nextRows.length} mapping(s).` : 'No mappings saved yet.');
@@ -34,7 +34,7 @@ export default function AutoCorrectPage() {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    if (!response.ok) return setStatus(data.error || 'Failed to save');
+    if (!response.ok) return setStatus(response.status === 403 ? 'Session expired. Please log in again.' : (data.error || 'Failed to save'));
     setStatus(editingId ? 'Mapping updated.' : 'Mapping added.');
     resetForm();
     await load();
@@ -54,6 +54,9 @@ export default function AutoCorrectPage() {
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="mb-4 text-xl font-semibold">Auto Correct Dictionary</h2>
+        <p className="mb-4 text-sm text-slate-500">
+          This dictionary is primarily auto-learned by the bot from real requests. Use this form only when you want to override or pre-seed a mapping.
+        </p>
         <div className="grid gap-3 md:grid-cols-2">
           <input value={slang} onChange={(e) => setSlang(e.target.value)} placeholder="slang e.g. 15 pm" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
           <input value={normalizedName} onChange={(e) => setNormalizedName(e.target.value)} placeholder="normalized e.g. iPhone 15 Pro Max" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />

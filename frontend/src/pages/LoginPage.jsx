@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Lock } from 'lucide-react';
 import PasswordField from '../components/PasswordField';
+import { saveDashboardToken } from '../lib/api';
 
 export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
@@ -23,7 +24,8 @@ export default function LoginPage({ onLogin }) {
 
       const data = await res.json();
       if (data.success) {
-        onLogin();
+        saveDashboardToken(data.sessionToken || '');
+        onLogin({ sessionToken: data.sessionToken || '' });
       } else {
         setError(data.error || 'Invalid master password');
       }
