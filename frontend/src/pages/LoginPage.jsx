@@ -16,6 +16,7 @@ export default function LoginPage({ onLogin }) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
       const res = await fetch(`${baseUrl}/api/login`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
       });

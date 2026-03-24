@@ -33,8 +33,34 @@ function initFirestore() {
 
 const firestore = initFirestore();
 
+// Save newly learned slang mappings so future requests skip model normalization.
+async function saveToDictionary(slang, normalizedName, db = firestore) {
+  const rawSlang = String(slang || '').trim();
+  const finalName = String(normalizedName || '').trim();
+  if (!db || !rawSlang || !finalName || finalName.toLowerCase() === 'null') return;
+
+  try {
+    // Firestore document IDs cannot contain forward slashes.
+    const safeDocId = rawSlang.toLowerCase().replace(/\//g, '-').replace(/[^a-z0-9_-]+/g, '_');
+
+    await db.collection('ar_dictionary').doc(safeDocId).set(
+      {
+        slang: rawSlang,
+        normalizedName: finalName,
+        autoLearned: true,
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
+    console.log(`🧠 AUTO-LEARNED: Mapped "${rawSlang}" to "${finalName}"`);
+  } catch (error) {
+    console.error('❌ Failed to auto-save to dictionary:', error.message);
+  }
+}
+
 module.exports = {
   admin,
   firestore,
   FieldValue: admin.firestore ? admin.firestore.FieldValue : null,
+  saveToDictionary,
 };

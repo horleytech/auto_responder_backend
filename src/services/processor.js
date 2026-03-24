@@ -1,10 +1,12 @@
 const { normalizeDeviceName } = require('./catalogService');
+const { saveToDictionary } = require('./firebaseService');
 
 function toMillis(input) {
   if (!input) return Date.now();
   if (typeof input === 'number') return input;
   return new Date(input).getTime();
 }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue }) {
   const memoryRaw = [];
@@ -47,7 +49,8 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function resolveNormalizedName(raw, dictionary, provider, overrides) {
-    const normalizedMessage = normalizeDeviceName(raw.senderMessage);
+    const senderMessage = String(raw.senderMessage || '');
+    const normalizedMessage = normalizeDeviceName(senderMessage);
     if (normalizedMessage && dictionary.has(normalizedMessage)) {
       return dictionary.get(normalizedMessage);
     }
@@ -60,9 +63,14 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     const prompt = `You are a normalization assistant. Return JSON only: {"normalizedName": string|null}.\nMatch the user text to the best exact catalog item using this arrangement map:\n${arrangementRows}`;
 
     try {
-      const rawResult = await providerService.runProvider(provider, prompt, String(raw.senderMessage || ''), overrides);
+      const rawResult = await providerService.runProvider(provider, prompt, senderMessage, overrides);
       const parsed = JSON.parse(rawResult || '{}');
-      return parsed.normalizedName || null;
+      const finalName = String(parsed.normalizedName || '').trim();
+      if (!finalName || finalName.toLowerCase() === 'null') return null;
+
+      if (normalizedMessage) dictionary.set(normalizedMessage, finalName);
+      await saveToDictionary(senderMessage, finalName, firestore);
+      return finalName;
     } catch {
       return null;
     }
@@ -124,22 +132,30 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     const rows = await listUnprocessedRaw();
     const dictionary = await getDictionaryMap();
     let processedCount = 0;
+    const rowDelayMs = Number(process.env.SYNC_ROW_DELAY_MS || 750);
+    console.log(`🌙 [MIDNIGHT WORKER] Starting sync for ${rows.length} unprocessed requests...`);
 
     for (const row of rows) {
-      const deviceName = await resolveNormalizedName(row, dictionary, provider, overrides);
-      if (deviceName) {
-        await incrementAnalytics({
-          deviceName,
-          category: row.aiCategory || 'new',
-          timestamp: row.timestamp,
-        });
-      }
+      try {
+        const deviceName = await resolveNormalizedName(row, dictionary, provider, overrides);
+        if (deviceName) {
+          await incrementAnalytics({
+            deviceName,
+            category: row.aiCategory || 'new',
+            timestamp: row.timestamp,
+          });
+        }
 
-      await incrementCustomer({ senderId: row.senderId || 'Unknown' });
-      await markRawProcessed(row.id);
-      processedCount += 1;
+        await incrementCustomer({ senderId: row.senderId || 'Unknown' });
+        await markRawProcessed(row.id);
+        processedCount += 1;
+      } catch (rowError) {
+        console.error(`❌ Sync failed for row ${row.id}:`, rowError.message);
+      }
+      if (rowDelayMs > 0) await sleep(rowDelayMs);
     }
 
+    console.log(`✅ [MIDNIGHT WORKER] Successfully synced ${processedCount} requests.`);
     return { processedCount };
   }
 
