@@ -49,21 +49,25 @@ function parseCookies(req) {
   return cookies;
 }
 
-function createDashboardSession(res) {
+function generateDashboardSessionToken() {
   const expiresAt = Date.now() + DASHBOARD_SESSION_TTL_MS;
   const nonce = crypto.randomBytes(16).toString('hex');
   const payload = `${expiresAt}.${nonce}`;
   const secret = String(process.env.DASHBOARD_PASSWORD || process.env.API_KEY || API_KEY || 'dashboard-fallback-secret');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  const token = `${payload}.${sig}`;
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Lax; Path=/${secure}; Max-Age=28800`);
+  return `${payload}.${sig}`;
 }
 
-function isDashboardAuthorized(req) {
-  const token = parseCookies(req).dashboard_session;
+function createDashboardSession(res) {
+  const token = generateDashboardSessionToken();
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Lax; Path=/${secure}; Max-Age=28800`);
+  return token;
+}
+
+function verifyDashboardToken(token) {
   if (!token) return false;
-  const parts = token.split('.');
+  const parts = String(token).split('.');
   if (parts.length !== 3) return false;
   const [expiresRaw, nonce, incomingSig] = parts;
   const expiresAt = Number(expiresRaw);
@@ -81,6 +85,16 @@ function isDashboardAuthorized(req) {
   }
 }
 
+function isDashboardAuthorized(req) {
+  const cookieToken = parseCookies(req).dashboard_session;
+  if (verifyDashboardToken(cookieToken)) return true;
+  const authHeader = String(req.headers.authorization || '');
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+  if (verifyDashboardToken(bearerToken)) return true;
+  const headerToken = String(req.headers['x-dashboard-session'] || '').trim();
+  return verifyDashboardToken(headerToken);
+}
+
 // ─── NEW: SECURE LOGIN ENDPOINT ───────────────────────────────────────────
 app.post('/api/login', (req, res) => {
   const password = String(req.body?.password || '').trim();
@@ -91,8 +105,8 @@ app.post('/api/login', (req, res) => {
   }
 
   if (password === correctPassword) {
-    createDashboardSession(res);
-    res.json({ success: true });
+    const sessionToken = createDashboardSession(res);
+    res.json({ success: true, sessionToken, expiresInMs: DASHBOARD_SESSION_TTL_MS });
   } else {
     res.status(401).json({ error: 'Incorrect master password.' });
   }
