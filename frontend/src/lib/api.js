@@ -6,8 +6,19 @@ function withBase(url) {
   return `${API_BASE}${url}`;
 }
 
+function isExpiredDashboardToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return true;
+  const [expiresRaw] = raw.split('.');
+  const expiresAt = Number(expiresRaw);
+  if (!Number.isFinite(expiresAt)) return true;
+  return expiresAt <= Date.now();
+}
+
 export async function fetchJsonSafe(url, options = {}) {
-  const sessionToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
+  const rawToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
+  const sessionToken = isExpiredDashboardToken(rawToken) ? '' : rawToken;
+  if (rawToken && !sessionToken) saveDashboardToken('');
   const finalOptions = {
     ...options,
     credentials: 'include',
