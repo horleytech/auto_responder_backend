@@ -42,6 +42,7 @@ QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 MAX_REQUEST_LOG=300
 CUSTOM_RESPONSE=Available
 GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
+KEEP_PROCESSED_RAW=false
 ```
 
 Optional Firebase persistence:
@@ -52,6 +53,7 @@ FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 ```
 
 If Firebase is set, request records and settings (active provider + CSV URL) persist in Firestore. If not, memory fallback is used.
+By default, synced raw requests are deleted after successful midnight sync to keep Firestore lean. Set `KEEP_PROCESSED_RAW=true` if you prefer to retain processed rows with a `processed` flag.
 
 ## API
 

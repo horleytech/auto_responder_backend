@@ -19,11 +19,16 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function saveRawRequest(payload) {
+    const nextPayload = {
+      processed: false,
+      ...payload,
+      processedAt: null,
+    };
     if (!firestore) {
-      memoryRaw.push({ id: `${Date.now()}`, ...payload });
+      memoryRaw.push({ id: `${Date.now()}`, ...nextPayload });
       return;
     }
-    await firestore.collection('ar_raw_requests').add(payload);
+    await firestore.collection('ar_raw_requests').add(nextPayload);
   }
 
   async function listUnprocessedRaw() {
@@ -38,9 +43,10 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     try {
       const snap = await firestore.collection('ar_dictionary').get();
       snap.docs.forEach((doc) => {
-        const data = doc.data();
-        const slang = normalizeDeviceName(data.slang);
-        if (slang && data.normalizedName) dict.set(slang, data.normalizedName);
+        const data = doc.data() || {};
+        const slang = normalizeDeviceName(data.slang || doc.id);
+        const normalizedName = String(data.normalizedName || '').trim();
+        if (slang && normalizedName) dict.set(slang, normalizedName);
       });
     } catch (err) {
       console.error('⚠️ Failed to read dictionary from Firebase:', err.message);
@@ -120,12 +126,24 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function markRawProcessed(rawId) {
+    const keepProcessedRaw = String(process.env.KEEP_PROCESSED_RAW || '').toLowerCase() === 'true';
     if (!firestore) {
-      const row = memoryRaw.find((x) => x.id === rawId);
-      if (row) row.processed = true;
+      const index = memoryRaw.findIndex((x) => x.id === rawId);
+      if (index < 0) return;
+      if (keepProcessedRaw) {
+        memoryRaw[index].processed = true;
+        memoryRaw[index].processedAt = Date.now();
+      } else {
+        memoryRaw.splice(index, 1);
+      }
       return;
     }
-    await firestore.collection('ar_raw_requests').doc(rawId).set({ processed: true, processedAt: Date.now() }, { merge: true });
+    const docRef = firestore.collection('ar_raw_requests').doc(rawId);
+    if (keepProcessedRaw) {
+      await docRef.set({ processed: true, processedAt: Date.now() }, { merge: true });
+      return;
+    }
+    await docRef.delete();
   }
 
   async function sync({ provider, overrides = {} }) {
@@ -196,9 +214,15 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function deleteDictionary(id) {
-    memoryDictionary.delete(normalizeDeviceName(id));
+    const normalizedId = normalizeDeviceName(id);
+    if (normalizedId) memoryDictionary.delete(normalizedId);
     if (!firestore) return;
     try {
+      const existing = await firestore.collection('ar_dictionary').doc(id).get();
+      if (existing.exists) {
+        const existingSlang = normalizeDeviceName(existing.data()?.slang);
+        if (existingSlang) memoryDictionary.delete(existingSlang);
+      }
       await firestore.collection('ar_dictionary').doc(id).delete();
     } catch (err) {
       console.error('⚠️ Failed to delete dictionary mapping from Firebase:', err.message);
