@@ -22,7 +22,7 @@ export default function LoginPage({ onLogin }) {
 
       const data = await res.json();
       if (data.success) {
-        onLogin(data.apiKey);
+        onLogin();
       } else {
         setError(data.error || 'Invalid master password');
       }

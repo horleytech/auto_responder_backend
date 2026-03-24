@@ -1,18 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-export default function AutoCorrectPage({ apiKey }) {
+export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
   const [slang, setSlang] = useState('');
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
   const [status, setStatus] = useState('');
-
-  const headers = useMemo(() => {
-    const h = { 'Content-Type': 'application/json' };
-    if (apiKey.trim()) h['x-api-key'] = apiKey.trim();
-    return h;
-  }, [apiKey]);
 
   async function load() {
     const { response, data } = await fetchJsonSafe('/api/dictionary');
@@ -36,7 +30,6 @@ export default function AutoCorrectPage({ apiKey }) {
     const payload = { slang, normalizedName };
     const { response, data } = await fetchJsonSafe('/api/dictionary', {
       method: 'POST',
-      headers,
       body: JSON.stringify(payload),
     });
     if (!response.ok) return setStatus(data.error || 'Failed to save');
@@ -46,7 +39,7 @@ export default function AutoCorrectPage({ apiKey }) {
   }
 
   async function remove(id) {
-    await fetchJsonSafe(`/api/dictionary/${id}`, { method: 'DELETE', headers });
+    await fetchJsonSafe(`/api/dictionary/${id}`, { method: 'DELETE' });
     if (editingId === id) resetForm();
     await load();
   }
