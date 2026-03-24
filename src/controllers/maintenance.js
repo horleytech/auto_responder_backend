@@ -1,11 +1,10 @@
 const express = require('express');
 
-function createMaintenanceRouter({ firestore, processor, settingsStore, resolveApiKey }) {
+function createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized }) {
   const router = express.Router();
 
   function guard(req, res, next) {
-    const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
-    if (!incoming || incoming !== resolveApiKey()) return res.sendStatus(403);
+    if (!isDashboardAuthorized(req)) return res.sendStatus(403);
     return next();
   }
 
