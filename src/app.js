@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
 const {
-  API_KEY, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL,
+  API_KEY, DASHBOARD_PASSWORD, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL, CORS_ALLOWED_ORIGINS,
 } = require('./config/env');
 const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
@@ -13,7 +13,16 @@ const { createProcessor } = require('./services/processor');
 const { createMaintenanceRouter } = require('./controllers/maintenance');
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+const defaultAllowedOrigins = ['http://localhost:3000', 'http://localhost:5173'];
+const allowedOrigins = CORS_ALLOWED_ORIGINS.length ? CORS_ALLOWED_ORIGINS : defaultAllowedOrigins;
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -34,7 +43,7 @@ function resolveExpectedApiKey() {
 }
 
 function isAuthorized(req) {
-  const incoming = String(req.headers['x-api-key'] || req.query.key || '').trim();
+  const incoming = String(req.headers['x-api-key'] || '').trim();
   return incoming === resolveExpectedApiKey();
 }
 
@@ -50,16 +59,17 @@ function parseCookies(req) {
 }
 
 function generateDashboardSessionToken() {
+  if (!DASHBOARD_PASSWORD) return null;
   const expiresAt = Date.now() + DASHBOARD_SESSION_TTL_MS;
   const nonce = crypto.randomBytes(16).toString('hex');
   const payload = `${expiresAt}.${nonce}`;
-  const secret = String(process.env.DASHBOARD_PASSWORD || process.env.API_KEY || API_KEY || 'dashboard-fallback-secret');
-  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const sig = crypto.createHmac('sha256', DASHBOARD_PASSWORD).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
 
 function createDashboardSession(res) {
   const token = generateDashboardSessionToken();
+  if (!token) return null;
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Lax; Path=/${secure}; Max-Age=28800`);
   return token;
@@ -74,9 +84,9 @@ function verifyDashboardToken(token) {
   if (!Number.isFinite(expiresAt) || !nonce || expiresAt < Date.now()) {
     return false;
   }
+  if (!DASHBOARD_PASSWORD) return false;
   const payload = `${expiresRaw}.${nonce}`;
-  const secret = String(process.env.DASHBOARD_PASSWORD || process.env.API_KEY || API_KEY || 'dashboard-fallback-secret');
-  const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const expectedSig = crypto.createHmac('sha256', DASHBOARD_PASSWORD).update(payload).digest('hex');
   if (incomingSig.length !== expectedSig.length) return false;
   try {
     return crypto.timingSafeEqual(Buffer.from(incomingSig), Buffer.from(expectedSig));
@@ -98,7 +108,7 @@ function isDashboardAuthorized(req) {
 // ─── NEW: SECURE LOGIN ENDPOINT ───────────────────────────────────────────
 app.post('/api/login', (req, res) => {
   const password = String(req.body?.password || '').trim();
-  const correctPassword = String(process.env.DASHBOARD_PASSWORD || '').trim();
+  const correctPassword = String(DASHBOARD_PASSWORD || '').trim();
 
   if (!correctPassword) {
     return res.status(500).json({ error: 'Server Error: DASHBOARD_PASSWORD not configured in .env' });
@@ -106,6 +116,9 @@ app.post('/api/login', (req, res) => {
 
   if (password === correctPassword) {
     const sessionToken = createDashboardSession(res);
+    if (!sessionToken) {
+      return res.status(500).json({ error: 'Server Error: DASHBOARD_PASSWORD not configured in .env' });
+    }
     res.json({ success: true, sessionToken, expiresInMs: DASHBOARD_SESSION_TTL_MS });
   } else {
     res.status(401).json({ error: 'Incorrect master password.' });

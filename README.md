@@ -27,6 +27,7 @@ Required:
 
 ```env
 API_KEY=your-secret-incoming-key
+DASHBOARD_PASSWORD=your-dashboard-password
 OPENAI_CHATGPT=your-openai-key
 QWEN_API_KEY=your-qwen-key
 ```
@@ -43,6 +44,7 @@ MAX_REQUEST_LOG=300
 CUSTOM_RESPONSE=Available
 GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
 KEEP_PROCESSED_RAW=false
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
 Optional Firebase persistence:
