@@ -6,7 +6,7 @@ import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe } from './lib/api';
+import { fetchJsonSafe, saveDashboardToken } from './lib/api';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -20,10 +20,9 @@ export default function App() {
   }, [darkMode]);
 
   useEffect(() => {
-    (async () => {
-      const providersResult = await fetchJsonSafe('/api/providers');
-      if (providersResult.response?.ok) setIsAuthenticated(true);
-    })();
+    const onAuthExpired = () => setIsAuthenticated(false);
+    window.addEventListener('dashboard-auth-expired', onAuthExpired);
+    return () => window.removeEventListener('dashboard-auth-expired', onAuthExpired);
   }, []);
 
   // Fetch Dashboard data ONLY if logged in
