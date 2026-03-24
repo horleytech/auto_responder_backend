@@ -6,6 +6,7 @@ function toMillis(input) {
   if (typeof input === 'number') return input;
   return new Date(input).getTime();
 }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue }) {
   const memoryRaw = [];
@@ -131,22 +132,30 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     const rows = await listUnprocessedRaw();
     const dictionary = await getDictionaryMap();
     let processedCount = 0;
+    const rowDelayMs = Number(process.env.SYNC_ROW_DELAY_MS || 750);
+    console.log(`🌙 [MIDNIGHT WORKER] Starting sync for ${rows.length} unprocessed requests...`);
 
     for (const row of rows) {
-      const deviceName = await resolveNormalizedName(row, dictionary, provider, overrides);
-      if (deviceName) {
-        await incrementAnalytics({
-          deviceName,
-          category: row.aiCategory || 'new',
-          timestamp: row.timestamp,
-        });
-      }
+      try {
+        const deviceName = await resolveNormalizedName(row, dictionary, provider, overrides);
+        if (deviceName) {
+          await incrementAnalytics({
+            deviceName,
+            category: row.aiCategory || 'new',
+            timestamp: row.timestamp,
+          });
+        }
 
-      await incrementCustomer({ senderId: row.senderId || 'Unknown' });
-      await markRawProcessed(row.id);
-      processedCount += 1;
+        await incrementCustomer({ senderId: row.senderId || 'Unknown' });
+        await markRawProcessed(row.id);
+        processedCount += 1;
+      } catch (rowError) {
+        console.error(`❌ Sync failed for row ${row.id}:`, rowError.message);
+      }
+      if (rowDelayMs > 0) await sleep(rowDelayMs);
     }
 
+    console.log(`✅ [MIDNIGHT WORKER] Successfully synced ${processedCount} requests.`);
     return { processedCount };
   }
 
