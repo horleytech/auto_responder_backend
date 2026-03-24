@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Lock } from 'lucide-react';
 import PasswordField from '../components/PasswordField';
-import { saveDashboardToken } from '../lib/api';
+import { fetchJsonSafe, saveDashboardToken } from '../lib/api';
 
 export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
@@ -14,20 +14,16 @@ export default function LoginPage({ onLogin }) {
     setError('');
 
     try {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${baseUrl}/api/login`, {
+      const { response, data } = await fetchJsonSafe('/api/login', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
       });
 
-      const data = await res.json();
-      if (data.success) {
+      if (response.ok && data.success) {
         saveDashboardToken(data.sessionToken || '');
         onLogin({ sessionToken: data.sessionToken || '' });
       } else {
-        setError(data.error || 'Invalid master password');
+        setError(data.error || `Login failed (${response.status})`);
       }
     } catch (err) {
       setError('Failed to connect to server');
