@@ -3,7 +3,6 @@ import DashboardLayout from './components/DashboardLayout';
 import AnalyticsPage from './pages/AnalyticsPage';
 import AutoCorrectPage from './pages/AutoCorrectPage';
 import BotLogicPage from './pages/BotLogicPage';
-import MaintenancePage from './pages/MaintenancePage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
@@ -15,7 +14,6 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
-  const [envKeysLoaded, setEnvKeysLoaded] = useState({ API_KEY: false, OPENAI_API_KEY: false, QWEN_API_KEY: false });
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -40,7 +38,6 @@ export default function App() {
           activeProvider: providersResult.data.activeProvider,
           providers: providersResult.data.providers || [],
         });
-        setEnvKeysLoaded(providersResult.data.envKeysLoaded || { API_KEY: false, OPENAI_API_KEY: false, QWEN_API_KEY: false });
       }
 
       const catalogResult = await fetchJsonSafe('/api/catalog-source');
@@ -64,14 +61,12 @@ export default function App() {
       {activePage === 'requests' && <RequestsPage />}
       {activePage === 'dictionary' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
-      {activePage === 'maintenance' && <MaintenancePage />}
       {activePage === 'settings' && (
         <SettingsPage
           providerState={providerState}
           setProviderState={setProviderState}
           catalogState={catalogState}
           setCatalogState={setCatalogState}
-          envKeysLoaded={envKeysLoaded}
         />
       )}
     </DashboardLayout>
