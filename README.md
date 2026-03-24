@@ -29,6 +29,7 @@ Required:
 API_KEY=your-secret-incoming-key
 DASHBOARD_PASSWORD=your-dashboard-password
 OPENAI_CHATGPT=your-openai-key
+# OPENAI_API_KEY=your-openai-key  # supported alias
 QWEN_API_KEY=your-qwen-key
 ```
 
@@ -46,6 +47,8 @@ GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
 KEEP_PROCESSED_RAW=false
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
+
+`CORS_ALLOWED_ORIGINS` also supports simple wildcards (for example, `https://*.horleytech.com`).
 
 Optional Firebase persistence:
 

@@ -13,12 +13,28 @@ const { createProcessor } = require('./services/processor');
 const { createMaintenanceRouter } = require('./controllers/maintenance');
 
 const app = express();
-const defaultAllowedOrigins = ['http://localhost:3000', 'http://localhost:5173'];
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://autoresponder.horleytech.com',
+  'https://www.autoresponder.horleytech.com',
+];
 const allowedOrigins = CORS_ALLOWED_ORIGINS.length ? CORS_ALLOWED_ORIGINS : defaultAllowedOrigins;
+
+function originMatchesRule(origin, rule) {
+  const normalizedRule = String(rule || '').trim();
+  if (!normalizedRule) return false;
+  if (normalizedRule === '*') return true;
+  if (!normalizedRule.includes('*')) return normalizedRule === origin;
+  const escaped = normalizedRule.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  const pattern = new RegExp(`^${escaped}$`);
+  return pattern.test(origin);
+}
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOrigins.some((rule) => originMatchesRule(origin, rule))) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
