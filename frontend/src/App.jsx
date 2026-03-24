@@ -19,7 +19,6 @@ export default function App() {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // Check if we already logged in via session cookie
   useEffect(() => {
     (async () => {
       const providersResult = await fetchJsonSafe('/api/providers');
