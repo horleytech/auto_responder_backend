@@ -1,51 +1,28 @@
-import { useMemo, useState } from 'react';
-import PasswordField from '../components/PasswordField';
+import { useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-export default function SettingsPage({ apiKey, setApiKey, providerState, setProviderState, catalogState, setCatalogState, envKeysLoaded }) {
+export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState, envKeysLoaded }) {
   const [status, setStatus] = useState('');
   const [showNukeModal, setShowNukeModal] = useState(false);
   const [confirmText, setConfirmText] = useState('');
 
-  const authHeaders = useMemo(() => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (apiKey.trim()) headers['x-api-key'] = apiKey.trim();
-    return headers;
-  }, [apiKey]);
-
   async function saveProvider() {
     const { response, data } = await fetchJsonSafe('/api/providers', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ provider: providerState.activeProvider }),
+      method: 'POST', body: JSON.stringify({ provider: providerState.activeProvider }),
     });
     setStatus(response.ok ? `Saved provider: ${data.activeProvider}` : `Provider save failed (${response.status})`);
   }
 
   async function saveCatalog() {
     const { response } = await fetchJsonSafe('/api/catalog-source', {
-      method: 'POST', headers: authHeaders,
+      method: 'POST',
       body: JSON.stringify({ inventoryCsvUrl: catalogState.inventoryCsvUrl, arrangementCsvUrl: catalogState.arrangementCsvUrl }),
     });
     setStatus(response.ok ? 'Catalog sources updated.' : `Catalog save failed (${response.status})`);
   }
 
-  async function saveApiFallback() {
-    const cleanApiKey = apiKey.trim();
-    const { response } = await fetchJsonSafe('/api/settings', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ apiKey: cleanApiKey }),
-    });
-
-    if (response.ok) {
-      if (cleanApiKey) localStorage.setItem('API_KEY', cleanApiKey);
-      else localStorage.removeItem('API_KEY');
-      setStatus('API key fallback saved to Firebase settings.');
-      return;
-    }
-
-    setStatus(`API key save failed (${response.status})`);
-  }
-
   async function runMaintenance(path) {
-    const { response, data } = await fetchJsonSafe(path, { method: 'POST', headers: authHeaders });
+    const { response, data } = await fetchJsonSafe(path, { method: 'POST' });
     setStatus(response.ok ? `${path} success` : `${path} failed: ${data.error || response.status}`);
   }
 
@@ -63,14 +40,12 @@ export default function SettingsPage({ apiKey, setApiKey, providerState, setProv
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-premium dark:border-slate-800 dark:bg-slate-900">
         <h2 className="mb-2 text-xl font-semibold">API Security</h2>
-        <p className="mb-4 text-sm text-slate-500">Keys are loaded from environment by default. Input fields are optional fallbacks/overrides.</p>
+        <p className="mb-4 text-sm text-slate-500">Keys are loaded from backend environment only. Dashboard auth now uses secure session cookies.</p>
         <div className="mb-4 grid gap-2 text-xs text-slate-500 md:grid-cols-3">
           <div>API_KEY: <strong>{envKeysLoaded.API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
           <div>OPENAI_API_KEY: <strong>{envKeysLoaded.OPENAI_API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
           <div>QWEN_API_KEY: <strong>{envKeysLoaded.QWEN_API_KEY ? 'Loaded from Environment' : 'Fallback Needed'}</strong></div>
         </div>
-        <PasswordField label="API_KEY fallback" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-        <button onClick={saveApiFallback} className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save API Key Fallback</button>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">

@@ -13,7 +13,6 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
-  const [apiKey, setApiKey] = useState('');
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
   const [envKeysLoaded, setEnvKeysLoaded] = useState({ API_KEY: false, OPENAI_API_KEY: false, QWEN_API_KEY: false });
@@ -22,18 +21,17 @@ export default function App() {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // Check if we already logged in
+  // Check if we already logged in via session cookie
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('API_KEY');
-    if (storedApiKey) {
-      setApiKey(storedApiKey);
-      setIsAuthenticated(true);
-    }
+    (async () => {
+      const providersResult = await fetchJsonSafe('/api/providers');
+      if (providersResult.response?.ok) setIsAuthenticated(true);
+    })();
   }, []);
 
   // Fetch Dashboard data ONLY if logged in
   useEffect(() => {
-    if (!isAuthenticated || !apiKey) return;
+    if (!isAuthenticated) return;
 
     (async () => {
       const providersResult = await fetchJsonSafe('/api/providers');
@@ -53,28 +51,22 @@ export default function App() {
         });
       }
     })();
-  }, [isAuthenticated, apiKey]);
+  }, [isAuthenticated]);
 
   // THE LOCK SCREEN
   if (!isAuthenticated) {
-    return <LoginPage onLogin={(key) => {
-      setApiKey(key);
-      localStorage.setItem('API_KEY', key);
-      setIsAuthenticated(true);
-    }} />;
+    return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
   }
 
   return (
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
       {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
       {activePage === 'requests' && <RequestsPage />}
-      {activePage === 'dictionary' && <AutoCorrectPage apiKey={apiKey} />}
-      {activePage === 'bot-logic' && <BotLogicPage apiKey={apiKey} />}
-      {activePage === 'maintenance' && <MaintenancePage apiKey={apiKey} />}
+      {activePage === 'dictionary' && <AutoCorrectPage />}
+      {activePage === 'bot-logic' && <BotLogicPage />}
+      {activePage === 'maintenance' && <MaintenancePage />}
       {activePage === 'settings' && (
         <SettingsPage
-          apiKey={apiKey}
-          setApiKey={setApiKey}
           providerState={providerState}
           setProviderState={setProviderState}
           catalogState={catalogState}

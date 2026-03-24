@@ -25,10 +25,12 @@ function createSettingsStore(db) {
   }
 
   async function updateSettings(partial) {
-    Object.assign(memory, partial || {});
+    const next = { ...(partial || {}) };
+    delete next.apiKey;
+    Object.assign(memory, next);
     if (!docRef) return;
     try {
-      await docRef.set({ ...(partial || {}), updatedAt: new Date().toISOString() }, { merge: true });
+      await docRef.set({ ...next, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (err) {
       console.error('⚠️ Failed to save settings to Firebase:', err.message);
     }

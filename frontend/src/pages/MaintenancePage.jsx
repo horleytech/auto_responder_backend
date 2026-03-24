@@ -1,17 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-export default function MaintenancePage({ apiKey }) {
+export default function MaintenancePage() {
   const [status, setStatus] = useState('');
 
-  const headers = useMemo(() => {
-    const h = { 'Content-Type': 'application/json' };
-    if (apiKey.trim()) h['x-api-key'] = apiKey.trim();
-    return h;
-  }, [apiKey]);
-
   async function run(path) {
-    const { response, data } = await fetchJsonSafe(path, { method: 'POST', headers });
+    const { response, data } = await fetchJsonSafe(path, { method: 'POST' });
     setStatus(response.ok ? JSON.stringify(data) : `Failed: ${data.error || response.status}`);
   }
 
