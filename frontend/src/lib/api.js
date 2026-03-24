@@ -1,4 +1,4 @@
-const API_BASE = '';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 
 function withBase(url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;

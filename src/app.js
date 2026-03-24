@@ -22,7 +22,7 @@ const providerService = createProviderService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
-const dashboardSessions = new Map();
+const DASHBOARD_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
@@ -50,21 +50,35 @@ function parseCookies(req) {
 }
 
 function createDashboardSession(res) {
-  const token = crypto.randomBytes(32).toString('hex');
-  dashboardSessions.set(token, Date.now() + (8 * 60 * 60 * 1000));
+  const expiresAt = Date.now() + DASHBOARD_SESSION_TTL_MS;
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const payload = `${expiresAt}.${nonce}`;
+  const secret = String(process.env.DASHBOARD_PASSWORD || process.env.API_KEY || API_KEY || 'dashboard-fallback-secret');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const token = `${payload}.${sig}`;
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Strict; Path=/${secure}; Max-Age=28800`);
+  res.setHeader('Set-Cookie', `dashboard_session=${token}; HttpOnly; SameSite=Lax; Path=/${secure}; Max-Age=28800`);
 }
 
 function isDashboardAuthorized(req) {
   const token = parseCookies(req).dashboard_session;
   if (!token) return false;
-  const expiresAt = dashboardSessions.get(token);
-  if (!expiresAt || expiresAt < Date.now()) {
-    dashboardSessions.delete(token);
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [expiresRaw, nonce, incomingSig] = parts;
+  const expiresAt = Number(expiresRaw);
+  if (!Number.isFinite(expiresAt) || !nonce || expiresAt < Date.now()) {
     return false;
   }
-  return true;
+  const payload = `${expiresRaw}.${nonce}`;
+  const secret = String(process.env.DASHBOARD_PASSWORD || process.env.API_KEY || API_KEY || 'dashboard-fallback-secret');
+  const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  if (incomingSig.length !== expectedSig.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(incomingSig), Buffer.from(expectedSig));
+  } catch {
+    return false;
+  }
 }
 
 // ─── NEW: SECURE LOGIN ENDPOINT ───────────────────────────────────────────
@@ -85,10 +99,8 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-  const token = parseCookies(req).dashboard_session;
-  if (token) dashboardSessions.delete(token);
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `dashboard_session=; HttpOnly; SameSite=Strict; Path=/${secure}; Max-Age=0`);
+  res.setHeader('Set-Cookie', `dashboard_session=; HttpOnly; SameSite=Lax; Path=/${secure}; Max-Age=0`);
   res.json({ success: true });
 });
 
