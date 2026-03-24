@@ -1,4 +1,5 @@
 const { normalizeDeviceName } = require('./catalogService');
+const { saveToDictionary } = require('./firebaseService');
 
 function toMillis(input) {
   if (!input) return Date.now();
@@ -47,7 +48,8 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function resolveNormalizedName(raw, dictionary, provider, overrides) {
-    const normalizedMessage = normalizeDeviceName(raw.senderMessage);
+    const senderMessage = String(raw.senderMessage || '');
+    const normalizedMessage = normalizeDeviceName(senderMessage);
     if (normalizedMessage && dictionary.has(normalizedMessage)) {
       return dictionary.get(normalizedMessage);
     }
@@ -60,9 +62,14 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     const prompt = `You are a normalization assistant. Return JSON only: {"normalizedName": string|null}.\nMatch the user text to the best exact catalog item using this arrangement map:\n${arrangementRows}`;
 
     try {
-      const rawResult = await providerService.runProvider(provider, prompt, String(raw.senderMessage || ''), overrides);
+      const rawResult = await providerService.runProvider(provider, prompt, senderMessage, overrides);
       const parsed = JSON.parse(rawResult || '{}');
-      return parsed.normalizedName || null;
+      const finalName = String(parsed.normalizedName || '').trim();
+      if (!finalName || finalName.toLowerCase() === 'null') return null;
+
+      if (normalizedMessage) dictionary.set(normalizedMessage, finalName);
+      await saveToDictionary(senderMessage, finalName, firestore);
+      return finalName;
     } catch {
       return null;
     }
