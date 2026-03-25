@@ -390,7 +390,14 @@ app.get('*', (req, res) => {
     const settings = await settingsStore.getSettings();
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
-    await catalog.loadCatalog();
+    const loaded = await catalog.loadCatalog();
+    if (loaded.success) {
+      console.log(
+        `📦 Catalog ready (${loaded.newCount} new, ${loaded.usedCount} used, ${loaded.arrangementCount} mapped aliases).`
+      );
+    } else {
+      console.error(`❌ Catalog failed to load: ${loaded.error}`);
+    }
   } catch (e) { console.error('Error during init:', e.message); }
 })();
 
