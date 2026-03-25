@@ -89,6 +89,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let arrangementMap = {};
 
   async function loadInventory() {
+    console.log(`📄 Loading inventory CSV from: ${inventoryCsvUrl}`);
     const response = await axios.get(inventoryCsvUrl);
     const rows = parseCsv(response.data);
     const headers = rows[0] || [];
@@ -121,9 +122,11 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
 
     supportedNewDevices = Array.from(newSet);
     supportedUsedDevices = Array.from(usedSet);
+    console.log(`✅ Inventory CSV loaded: ${supportedNewDevices.length} new, ${supportedUsedDevices.length} used devices.`);
   }
 
   async function loadArrangementMap() {
+    console.log(`🗺️ Loading arrangement CSV from: ${arrangementCsvUrl}`);
     const response = await axios.get(arrangementCsvUrl);
     const rows = parseCsv(response.data);
     const headers = (rows[0] || []).map((h) => h.toLowerCase());
@@ -144,6 +147,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
 
     arrangementMap = nextMap;
+    console.log(`✅ Arrangement map loaded: ${Object.keys(arrangementMap).length} aliases.`);
   }
 
   async function loadCatalog() {
