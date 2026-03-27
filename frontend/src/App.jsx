@@ -6,7 +6,7 @@ import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import AutoCorrectPage from './pages/AutoCorrectPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe, hasDashboardSession, saveDashboardToken } from './lib/api';
+import { fetchJsonSafe } from './lib/api';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(hasDashboardSession());

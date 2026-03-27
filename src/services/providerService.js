@@ -71,72 +71,11 @@ function createProviderService() {
     return completion.choices?.[0]?.message?.content || '{}';
   }
 
-  async function runJson(provider, systemPrompt, userMessage, overrides = {}) {
-    const raw = await runProvider(provider, systemPrompt, userMessage, overrides);
-    try {
-      return JSON.parse(raw);
-    } catch {
-      throw new Error('AI response was not valid JSON');
-    }
-  }
-
-  function buildGatekeeperPrompt(newForbidden, usedForbidden) {
-    return `
-You are the Gatekeeper for an inventory checker.
-Analyze the user message and return ONLY a JSON object.
-
-Return format:
-{
-  "category": "new" | "used",
-  "intentItem": string | null,
-  "forbidden": string | null,
-  "isApproved": boolean,
-  "reason": string
-}
-
-Rules:
-1) Category is "used" if user explicitly indicates used/uk used/second hand; otherwise "new".
-2) Forbidden list for NEW: ${newForbidden.join(', ')}
-3) Forbidden list for USED: ${usedForbidden.join(', ')}
-4) "esim" is forbidden ONLY when "physical" or "physical sim" is absent.
-5) intentItem should be the primary requested device phrase as written by user.
-6) If forbidden is detected, isApproved must be false.
-7) Return strict JSON only.
-`.trim();
-  }
-
-  async function runTwoLayerCheck({ provider, userMessage, newForbidden, usedForbidden, catalog, gatekeeperPrompt, overrides = {} }) {
-    const prompt = gatekeeperPrompt || buildGatekeeperPrompt(newForbidden, usedForbidden);
-    const gatekeeper = await runJson(provider, prompt, userMessage, overrides);
-
-    if (!gatekeeper.intentItem || !gatekeeper.isApproved) {
-      return {
-        gatekeeper,
-        matchmaker: { mappedItem: null, inInventory: false, matchedDevice: null },
-      };
-    }
-
-    const category = gatekeeper.category === 'used' ? 'used' : 'new';
-    const mappedItem = catalog.mapArrangement(gatekeeper.intentItem);
-    const inventoryPool = category === 'used' ? catalog.getUsedDevices() : catalog.getNewDevices();
-    const matchedDevice = inventoryPool.find((device) => device === mappedItem) || null;
-
-    return {
-      gatekeeper,
-      matchmaker: {
-        mappedItem,
-        inInventory: Boolean(matchedDevice),
-        matchedDevice,
-      },
-    };
-  }
-
   return {
     listProviders,
     setActiveProvider,
     getActiveProvider: () => activeProvider,
     runProvider,
-    runTwoLayerCheck,
   };
 }
 

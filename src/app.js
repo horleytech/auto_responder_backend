@@ -55,135 +55,14 @@ const REQUEST_STATUSES = {
   NO_MATCH: 'no_match',
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
-const MAX_REQUEST_ROWS_FOR_ANALYTICS = 1200;
-const MAX_REQUEST_ROWS_FOR_DASHBOARD = 50;
-
-function normalizeRequestStatus(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function resolveSenderId(body = {}) {
-  const candidates = [
-    body.senderName,
-    body.customerName,
-    body.name,
-    body.senderId,
-    body.sender,
-    body.sender?.name,
-    body.sender?.id,
-    body.sender?.phone,
-    body.senderPhone,
-    body.phone,
-    body.customer,
-    body.customerId,
-    body.contact,
-    body.contactName,
-    body.chatId,
-    body.from,
-  ];
-  for (const value of candidates) {
-    const cleaned = String(value || '').trim();
-    if (cleaned) return cleaned;
-  }
-  return 'Unknown';
-}
-
-function parseDateRange(query = {}) {
-  const startRaw = String(query.start || '').trim();
-  const endRaw = String(query.end || '').trim();
-
-  const start = startRaw ? new Date(startRaw).getTime() : 0;
-  const endBase = endRaw ? new Date(endRaw).getTime() : Number.POSITIVE_INFINITY;
-  const end = Number.isFinite(endBase) ? endBase + 86400000 - 1 : Number.POSITIVE_INFINITY;
-
-  return {
-    start: Number.isFinite(start) ? start : 0,
-    end,
-  };
-}
-
-function requestTimestamp(row) {
-  const rawTime = row.timestamp || row.processedAt || row.createdAt;
-  return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
-}
-
-async function persistCatalogHistory() {
-  const historicalCatalogDevices = catalog.getHistoricalDevices();
-  await settingsStore.updateSettings({ historicalCatalogDevices });
-}
 
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);
 }
 
-async function buildEffectiveMappings() {
-  const csvMappings = Object.entries(catalog.getArrangementMap())
-    .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
-    .sort((a, b) => a.alias.localeCompare(b.alias));
-
-  const effectiveMap = new Map();
-  csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
-  const dictionaryRows = await processor.listDictionary();
-  const learnedMappings = dictionaryRows
-    .map((row) => {
-      const alias = catalog.normalizeDeviceName(row.slang);
-      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
-      if (!alias || !normalizedName) return null;
-      return { alias, normalizedName, source: 'dictionary' };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.alias.localeCompare(b.alias));
-  learnedMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
-
-  const settings = await settingsStore.getSettings();
-  const manualMappings = (Array.isArray(settings.manualMappings) ? settings.manualMappings : [])
-    .map((row) => {
-      const alias = catalog.normalizeDeviceName(row?.alias);
-      const normalizedName = catalog.normalizeDeviceName(row?.normalizedName);
-      if (!alias || !normalizedName) return null;
-      return { alias, normalizedName, source: 'manual' };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.alias.localeCompare(b.alias));
-  manualMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
-
-  return { csvMappings, learnedMappings, manualMappings, effectiveMap };
-}
-
-function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
-  const nextArchive = { ...(existingArchive || {}) };
-  incomingGroups.forEach((group) => {
-    const product = catalog.normalizeDeviceName(group.product);
-    if (!product) return;
-    const current = nextArchive[product] || { product, aliases: [], sources: [], updatedAt: 0 };
-    const aliasSet = new Set((current.aliases || []).map((alias) => catalog.normalizeDeviceName(alias)).filter(Boolean));
-    const sourceSet = new Set((current.sources || []).filter(Boolean));
-    (group.aliases || []).forEach((alias) => {
-      const normalizedAlias = catalog.normalizeDeviceName(alias);
-      if (normalizedAlias) aliasSet.add(normalizedAlias);
-    });
-    (group.sources || []).forEach((source) => sourceSet.add(source));
-    nextArchive[product] = {
-      product,
-      aliases: Array.from(aliasSet).sort(),
-      sources: Array.from(sourceSet).sort(),
-      updatedAt: Date.now(),
-    };
-  });
-  return nextArchive;
-}
-
-function formatProductGroupsFromArchive(archive = {}, activeProducts = new Set()) {
-  return Object.values(archive)
-    .filter((entry) => entry?.product && !activeProducts.has(entry.product))
-    .map((entry) => ({
-      product: entry.product,
-      aliases: Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean).sort() : [],
-      sources: Array.isArray(entry.sources) ? entry.sources.filter(Boolean).sort() : [],
-      updatedAt: Number(entry.updatedAt || 0),
-    }))
-    .sort((a, b) => a.product.localeCompare(b.product));
+function sanitizeLowercaseStringArray(value) {
+  return sanitizeStringArray(value).map((v) => v.toLowerCase());
 }
 
 function resolveExpectedApiKey() {
@@ -340,8 +219,8 @@ app.get('/api/bot-logic', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const settings = await settingsStore.getSettings();
   res.json({
-    forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
+    forbiddenNewPhrases: sanitizeLowercaseStringArray(settings.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeLowercaseStringArray(settings.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
   });
 });
@@ -349,8 +228,8 @@ app.get('/api/bot-logic', async (req, res) => {
 app.post('/api/bot-logic', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const next = {
-    forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
-    forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
+    forbiddenNewPhrases: sanitizeLowercaseStringArray(req.body?.forbiddenNewPhrases),
+    forbiddenUsedPhrases: sanitizeLowercaseStringArray(req.body?.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
   };
   await settingsStore.updateSettings(next);
@@ -394,11 +273,10 @@ app.delete('/api/dictionary/:id', async (req, res) => {
 app.get('/api/requests', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   if (!firestore) return res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } });
-  const { start, end } = parseDateRange(req.query || {});
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
+      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -419,25 +297,14 @@ app.get('/api/requests', async (req, res) => {
       return acc;
     }, {});
 
-    const bySender = requests.reduce((acc, row) => {
-      const key = String(row.senderId || 'Unknown').trim() || 'Unknown';
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-
-    return { total: requests.length, byStatus, byHour, byDevice, bySender };
+    return { total: requests.length, byStatus, byHour, byDevice };
   };
 
   try {
-    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(MAX_REQUEST_ROWS_FOR_ANALYTICS).get();
+    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const requests = rows.filter((row) => {
-      if (!PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status))) return false;
-      const time = requestTimestamp(row);
-      if (!Number.isFinite(time)) return true;
-      return time >= start && time <= end;
-    });
-    res.json({ requests: requests.slice(0, MAX_REQUEST_ROWS_FOR_DASHBOARD), summary: summarizeRequests(requests) });
+    const requests = rows.filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()));
+    res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
@@ -727,11 +594,11 @@ app.post('/api/respond', async (req, res) => {
     const activeNewDevices = loadedNew && loadedNew.length ? loadedNew : ['iphone 13 pro max'];
     const activeUsedDevices = loadedUsed && loadedUsed.length ? loadedUsed : ['iphone 13 pro max'];
     
-    let activeForbiddenNew = sanitizeStringArray(settings.forbiddenNewPhrases);
-    if (!activeForbiddenNew.length) activeForbiddenNew = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'Used'];
+    let activeForbiddenNew = sanitizeLowercaseStringArray(settings.forbiddenNewPhrases);
+    if (!activeForbiddenNew.length) activeForbiddenNew = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'used'];
     
-    let activeForbiddenUsed = sanitizeStringArray(settings.forbiddenUsedPhrases);
-    if (!activeForbiddenUsed.length) activeForbiddenUsed = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'NEW'];
+    let activeForbiddenUsed = sanitizeLowercaseStringArray(settings.forbiddenUsedPhrases);
+    if (!activeForbiddenUsed.length) activeForbiddenUsed = ['esim', 'locked', 'idm', 'wifi only', 'panel', 'new'];
     
     let activeDynamicResponses = sanitizeStringArray(settings.dynamicResponses);
     if (!activeDynamicResponses.length) activeDynamicResponses = ["Available", "Available chief", "Available boss"];
@@ -783,7 +650,7 @@ RULES:
       finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
       responseIndex++;
       requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
-      console.log(`✅ Match found: ${mappedDevice}. Sending reply: ${finalResponse}`);
+      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
     } else {
       console.log(`🤷 No match or forbidden phrase found.`);
     }
@@ -792,11 +659,11 @@ RULES:
       setImmediate(async () => {
         try {
           await processor.saveRawRequest({
-            senderId: resolveSenderId(req.body),
+            senderId: req.body?.senderId || 'Unknown',
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: mappedDevice || foundDevice,
+            matchedDevice: foundDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

@@ -197,12 +197,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
   }
 
-  function mapArrangement(input) {
-    const normalized = normalizeDeviceName(input);
-    if (!normalized) return null;
-    return arrangementMap[normalized] || normalized;
-  }
-
   return {
     getInventoryCsvUrl: () => inventoryCsvUrl,
     getArrangementCsvUrl: () => arrangementCsvUrl,
@@ -215,17 +209,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
     getArrangementMap: () => arrangementMap,
-    getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])).sort(),
-    getHistoricalDevices: () => Array.from(historicalDevices).sort(),
-    setHistoricalDevices: (list = []) => {
-      historicalDevices.clear();
-      list.forEach((item) => {
-        const normalized = normalizeDeviceName(item);
-        if (normalized) historicalDevices.add(normalized);
-      });
-    },
-    getLastLoadedAt: () => lastLoadedAt,
-    mapArrangement,
     normalizeDeviceName,
     loadCatalog,
   };
