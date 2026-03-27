@@ -1,5 +1,24 @@
 const axios = require('axios');
 
+function normalizeCsvUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return raw;
+
+  const match = raw.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) return raw;
+
+  let gid = '';
+  try {
+    const parsed = new URL(raw);
+    gid = parsed.searchParams.get('gid') || '';
+  } catch {
+    gid = '';
+  }
+
+  const gidQuery = gid ? `&gid=${gid}` : '';
+  return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv${gidQuery}`;
+}
+
 function normalizeDeviceName(deviceType) {
   if (!deviceType) return null;
   return String(deviceType)
@@ -87,10 +106,16 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let supportedNewDevices = [];
   let supportedUsedDevices = [];
   let arrangementMap = {};
+  let lastLoadedAt = 0;
+  const historicalDevices = new Set();
 
   async function loadInventory() {
-    console.log(`📄 Loading inventory CSV from: ${inventoryCsvUrl}`);
-    const response = await axios.get(inventoryCsvUrl);
+    const csvUrl = normalizeCsvUrl(inventoryCsvUrl);
+    console.log(`📄 Loading inventory CSV from: ${csvUrl}`);
+    const response = await axios.get(csvUrl);
+    if (String(response.data || '').toLowerCase().includes('<html')) {
+      throw new Error('Inventory URL returned HTML, not CSV. Use a Google Sheets CSV export URL.');
+    }
     const rows = parseCsv(response.data);
     const headers = rows[0] || [];
     const deviceIndex = headers.indexOf('Device Type');
@@ -126,8 +151,12 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   }
 
   async function loadArrangementMap() {
-    console.log(`🗺️ Loading arrangement CSV from: ${arrangementCsvUrl}`);
-    const response = await axios.get(arrangementCsvUrl);
+    const csvUrl = normalizeCsvUrl(arrangementCsvUrl);
+    console.log(`🗺️ Loading arrangement CSV from: ${csvUrl}`);
+    const response = await axios.get(csvUrl);
+    if (String(response.data || '').toLowerCase().includes('<html')) {
+      throw new Error('Arrangement URL returned HTML, not CSV. Use a Google Sheets CSV export URL.');
+    }
     const rows = parseCsv(response.data);
     const headers = (rows[0] || []).map((h) => h.toLowerCase());
 
@@ -153,11 +182,15 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   async function loadCatalog() {
     try {
       await Promise.all([loadInventory(), loadArrangementMap()]);
+      [...supportedNewDevices, ...supportedUsedDevices].forEach((name) => historicalDevices.add(name));
+      lastLoadedAt = Date.now();
       return {
         success: true,
         newCount: supportedNewDevices.length,
         usedCount: supportedUsedDevices.length,
         arrangementCount: Object.keys(arrangementMap).length,
+        lastLoadedAt,
+        historicalCount: historicalDevices.size,
       };
     } catch (err) {
       return { success: false, error: err.message };
@@ -168,10 +201,10 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getInventoryCsvUrl: () => inventoryCsvUrl,
     getArrangementCsvUrl: () => arrangementCsvUrl,
     setInventoryCsvUrl: (nextUrl) => {
-      inventoryCsvUrl = nextUrl;
+      inventoryCsvUrl = normalizeCsvUrl(nextUrl);
     },
     setArrangementCsvUrl: (nextUrl) => {
-      arrangementCsvUrl = nextUrl;
+      arrangementCsvUrl = normalizeCsvUrl(nextUrl);
     },
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
