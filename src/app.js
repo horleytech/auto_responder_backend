@@ -422,6 +422,7 @@ app.get('/api/clean-analytics', async (req, res) => {
   const since = req.query.start ? start : defaultSince;
   const until = req.query.end ? end : Number.POSITIVE_INFINITY;
   let devices = [], customers = [];
+  let summaryFromRaw = null;
   if (firestore) {
     try {
       const [aSnap, cSnap] = await Promise.all([
@@ -448,6 +449,22 @@ app.get('/api/clean-analytics', async (req, res) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;
           });
+
+        if (persisted.length) {
+          summaryFromRaw = persisted.reduce((acc, row) => {
+            const status = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
+            const deviceName = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+            const at = requestTimestamp(row);
+            acc.total += 1;
+            acc.byStatus[status] = (acc.byStatus[status] || 0) + 1;
+            if (deviceName) acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + 1;
+            if (Number.isFinite(at)) {
+              const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+              acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + 1;
+            }
+            return acc;
+          }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+        }
 
         if (!devices.length) {
           const byDevice = persisted.reduce((acc, row) => {
@@ -476,7 +493,32 @@ app.get('/api/clean-analytics', async (req, res) => {
       }
     } catch (e) { console.error("Firebase analytics read error:", e.message); }
   }
-  res.json({ devices, customers, timeframe, start: since || null, end: Number.isFinite(until) ? until : null });
+  const summaryFromDevices = devices.reduce((acc, row) => {
+    const deviceName = String(row.deviceName || '').trim();
+    const count = Number(row.requestCount || 0);
+    if (!deviceName || count <= 0) return acc;
+    acc.total += count;
+    acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + count;
+    const at = Number(row.lastRequestAt || 0);
+    if (Number.isFinite(at) && at > 0) {
+      const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+      acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + count;
+    }
+    return acc;
+  }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+  if (!summaryFromRaw && summaryFromDevices.total > 0) {
+    summaryFromDevices.byStatus[REQUEST_STATUSES.REPLIED] = summaryFromDevices.total;
+  }
+  const summary = summaryFromRaw || summaryFromDevices;
+
+  res.json({
+    devices,
+    customers,
+    summary,
+    timeframe,
+    start: since || null,
+    end: Number.isFinite(until) ? until : null,
+  });
 });
 
 app.get('/api/catalog-mappings', async (req, res) => {
