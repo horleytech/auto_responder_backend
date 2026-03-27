@@ -4,6 +4,7 @@ import { fetchJsonSafe } from '../lib/api';
 export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
   const [csvMappings, setCsvMappings] = useState([]);
+  const [learnedMappings, setLearnedMappings] = useState([]);
   const [manualMappings, setManualMappings] = useState([]);
   const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
@@ -34,6 +35,7 @@ export default function AutoCorrectPage() {
     const { response, data } = await fetchJsonSafe('/api/catalog-mappings');
     if (!response.ok) return;
     setCsvMappings(data.csvMappings || []);
+    setLearnedMappings(data.learnedMappings || []);
     setManualMappings(data.manualMappings || []);
     setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
