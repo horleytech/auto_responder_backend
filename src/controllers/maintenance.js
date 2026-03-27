@@ -1,6 +1,6 @@
 const express = require('express');
 
-function createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized }) {
+function createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized, catalog }) {
   const router = express.Router();
 
   function guard(req, res, next) {
@@ -10,6 +10,13 @@ function createMaintenanceRouter({ firestore, processor, settingsStore, isDashbo
 
   router.post('/sync', guard, async (req, res) => {
     try {
+      const catalogLoad = catalog ? await catalog.loadCatalog() : { success: true };
+      if (!catalogLoad.success) {
+        return res.status(400).json({ error: `Catalog refresh failed before sync: ${catalogLoad.error}` });
+      }
+      if (catalog?.getHistoricalDevices) {
+        await settingsStore.write({ historicalCatalogDevices: catalog.getHistoricalDevices() });
+      }
       const settings = await settingsStore.read();
       const provider = settings.activeProvider || 'chatgpt';
       const result = await processor.sync({
@@ -19,7 +26,7 @@ function createMaintenanceRouter({ firestore, processor, settingsStore, isDashbo
           qwenKey: req.body?.QWEN_API_KEY,
         },
       });
-      return res.json({ success: true, ...result });
+      return res.json({ success: true, catalog: catalogLoad, ...result });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
