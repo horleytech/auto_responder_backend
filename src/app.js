@@ -58,12 +58,20 @@ const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_ST
 
 function resolveSenderId(body = {}) {
   const candidates = [
+    body.senderName,
+    body.customerName,
+    body.name,
     body.senderId,
     body.sender,
+    body.sender?.name,
+    body.sender?.id,
+    body.sender?.phone,
     body.senderPhone,
     body.phone,
     body.customer,
     body.customerId,
+    body.contact,
+    body.contactName,
     body.chatId,
     body.from,
   ];
