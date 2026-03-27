@@ -55,6 +55,12 @@ const REQUEST_STATUSES = {
   NO_MATCH: 'no_match',
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
+const MAX_REQUEST_ROWS_FOR_ANALYTICS = 1200;
+const MAX_REQUEST_ROWS_FOR_DASHBOARD = 50;
+
+function normalizeRequestStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -118,8 +124,31 @@ async function buildEffectiveMappings() {
 
   const effectiveMap = new Map();
   csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+  const dictionaryRows = await processor.listDictionary();
+  const learnedMappings = dictionaryRows
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row.slang);
+      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'dictionary' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  learnedMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
 
-  return { csvMappings, learnedMappings: [], manualMappings: [], effectiveMap };
+  const settings = await settingsStore.getSettings();
+  const manualMappings = (Array.isArray(settings.manualMappings) ? settings.manualMappings : [])
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row?.alias);
+      const normalizedName = catalog.normalizeDeviceName(row?.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'manual' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  manualMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  return { csvMappings, learnedMappings, manualMappings, effectiveMap };
 }
 
 function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
@@ -332,6 +361,36 @@ app.post('/api/bot-logic', async (req, res) => {
   return res.json({ success: true, ...next });
 });
 
+app.get('/api/dictionary', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    const dictionary = await processor.listDictionary();
+    return res.json({ dictionary });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to load dictionary' });
+  }
+});
+
+app.post('/api/dictionary', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    await processor.upsertDictionary(req.body || {});
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to save mapping' });
+  }
+});
+
+app.delete('/api/dictionary/:id', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    await processor.deleteDictionary(String(req.params.id || ''));
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to delete mapping' });
+  }
+});
+
 app.get('/api/requests', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   if (!firestore) return res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } });
@@ -339,7 +398,7 @@ app.get('/api/requests', async (req, res) => {
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      const key = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -370,15 +429,15 @@ app.get('/api/requests', async (req, res) => {
   };
 
   try {
-    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
+    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(MAX_REQUEST_ROWS_FOR_ANALYTICS).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const requests = rows.filter((row) => {
-      if (!PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim())) return false;
+      if (!PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status))) return false;
       const time = requestTimestamp(row);
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
     });
-    res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
+    res.json({ requests: requests.slice(0, MAX_REQUEST_ROWS_FOR_DASHBOARD), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
@@ -416,6 +475,7 @@ app.get('/api/clean-analytics', async (req, res) => {
   const since = req.query.start ? start : defaultSince;
   const until = req.query.end ? end : Number.POSITIVE_INFINITY;
   let devices = [], customers = [];
+  let summaryFromRaw = null;
   if (firestore) {
     try {
       const [aSnap, cSnap] = await Promise.all([
@@ -437,11 +497,27 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()))
+          .filter((row) => PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status)))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;
           });
+
+        if (persisted.length) {
+          summaryFromRaw = persisted.reduce((acc, row) => {
+            const status = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
+            const deviceName = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+            const at = requestTimestamp(row);
+            acc.total += 1;
+            acc.byStatus[status] = (acc.byStatus[status] || 0) + 1;
+            if (deviceName) acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + 1;
+            if (Number.isFinite(at)) {
+              const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+              acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + 1;
+            }
+            return acc;
+          }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+        }
 
         if (!devices.length) {
           const byDevice = persisted.reduce((acc, row) => {
@@ -470,7 +546,32 @@ app.get('/api/clean-analytics', async (req, res) => {
       }
     } catch (e) { console.error("Firebase analytics read error:", e.message); }
   }
-  res.json({ devices, customers, timeframe, start: since || null, end: Number.isFinite(until) ? until : null });
+  const summaryFromDevices = devices.reduce((acc, row) => {
+    const deviceName = String(row.deviceName || '').trim();
+    const count = Number(row.requestCount || 0);
+    if (!deviceName || count <= 0) return acc;
+    acc.total += count;
+    acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + count;
+    const at = Number(row.lastRequestAt || 0);
+    if (Number.isFinite(at) && at > 0) {
+      const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+      acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + count;
+    }
+    return acc;
+  }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+  if (!summaryFromRaw && summaryFromDevices.total > 0) {
+    summaryFromDevices.byStatus[REQUEST_STATUSES.REPLIED] = summaryFromDevices.total;
+  }
+  const summary = summaryFromRaw || summaryFromDevices;
+
+  res.json({
+    devices,
+    customers,
+    summary,
+    timeframe,
+    start: since || null,
+    end: Number.isFinite(until) ? until : null,
+  });
 });
 
 app.get('/api/catalog-mappings', async (req, res) => {
@@ -479,7 +580,7 @@ app.get('/api/catalog-mappings', async (req, res) => {
   const { csvMappings, learnedMappings, manualMappings } = await buildEffectiveMappings();
   const settings = await settingsStore.getSettings();
   const catalogDevices = catalog.getAllCatalogDevices();
-  const mergedMappings = [...csvMappings, ...manualMappings];
+  const mergedMappings = [...csvMappings, ...learnedMappings, ...manualMappings];
   const historicalCatalogDevices = catalog.getHistoricalDevices();
   const historicalSet = new Set(historicalCatalogDevices);
   catalogDevices.forEach((name) => historicalSet.delete(name));

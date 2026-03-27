@@ -145,7 +145,7 @@ export default function AutoCorrectPage() {
           <button type="button" onClick={refreshCatalog} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white">Refresh CSV Now</button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Active mappings (from CSV): {csvMappings.length} • Learned mappings (CSV + Auto + Manual): {mergedMappings.length} (Manual/Auto add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
+          Active mappings (from CSV): {csvMappings.length} • Dictionary-learned mappings: {learnedMappings.length} • Total effective mappings (CSV + Dictionary + Manual): {mergedMappings.length} (Manual add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
 
