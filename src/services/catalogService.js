@@ -86,6 +86,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let arrangementCsvUrl = initialArrangementCsvUrl;
   let supportedNewDevices = [];
   let supportedUsedDevices = [];
+  let legacyHistoricalDevices = [];
   let arrangementMap = {};
 
   async function loadInventory() {
@@ -164,12 +165,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
   }
 
-  function mapArrangement(input) {
-    const normalized = normalizeDeviceName(input);
-    if (!normalized) return null;
-    return arrangementMap[normalized] || normalized;
-  }
-
   return {
     getInventoryCsvUrl: () => inventoryCsvUrl,
     getArrangementCsvUrl: () => arrangementCsvUrl,
@@ -181,8 +176,14 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     },
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
+    // Backward-compatible no-op support for legacy callers.
+    setHistoricalDevices: (nextDevices) => {
+      legacyHistoricalDevices = Array.isArray(nextDevices)
+        ? nextDevices.map((item) => normalizeDeviceName(item)).filter(Boolean)
+        : [];
+    },
+    getHistoricalDevices: () => legacyHistoricalDevices,
     getArrangementMap: () => arrangementMap,
-    mapArrangement,
     normalizeDeviceName,
     loadCatalog,
   };

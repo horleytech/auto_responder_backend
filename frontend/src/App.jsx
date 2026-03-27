@@ -6,10 +6,10 @@ import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe, saveDashboardToken } from './lib/api';
+import { fetchJsonSafe, hasDashboardSession } from './lib/api';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => hasDashboardSession());
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
