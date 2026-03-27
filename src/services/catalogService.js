@@ -87,6 +87,8 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let supportedNewDevices = [];
   let supportedUsedDevices = [];
   let arrangementMap = {};
+  let lastLoadedAt = 0;
+  const historicalDevices = new Set();
 
   async function loadInventory() {
     console.log(`📄 Loading inventory CSV from: ${inventoryCsvUrl}`);
@@ -153,11 +155,15 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   async function loadCatalog() {
     try {
       await Promise.all([loadInventory(), loadArrangementMap()]);
+      [...supportedNewDevices, ...supportedUsedDevices].forEach((name) => historicalDevices.add(name));
+      lastLoadedAt = Date.now();
       return {
         success: true,
         newCount: supportedNewDevices.length,
         usedCount: supportedUsedDevices.length,
         arrangementCount: Object.keys(arrangementMap).length,
+        lastLoadedAt,
+        historicalCount: historicalDevices.size,
       };
     } catch (err) {
       return { success: false, error: err.message };
@@ -182,6 +188,16 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
     getArrangementMap: () => arrangementMap,
+    getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])).sort(),
+    getHistoricalDevices: () => Array.from(historicalDevices).sort(),
+    setHistoricalDevices: (list = []) => {
+      historicalDevices.clear();
+      list.forEach((item) => {
+        const normalized = normalizeDeviceName(item);
+        if (normalized) historicalDevices.add(normalized);
+      });
+    },
+    getLastLoadedAt: () => lastLoadedAt,
     mapArrangement,
     normalizeDeviceName,
     loadCatalog,

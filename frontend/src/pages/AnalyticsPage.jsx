@@ -9,45 +9,69 @@ const timeframeOptions = [
 
 export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('1m');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [data, setData] = useState({ devices: [], customers: [] });
-  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
+  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
     (async () => {
+      const params = new URLSearchParams({ timeframe });
+      if (dateRange.start) params.set('start', dateRange.start);
+      if (dateRange.end) params.set('end', dateRange.end);
       const [analyticsResponse, requestsResponse] = await Promise.all([
-        fetchJsonSafe(`/api/clean-analytics?timeframe=${timeframe}`),
-        fetchJsonSafe('/api/requests'),
+        fetchJsonSafe(`/api/clean-analytics?${params.toString()}`),
+        fetchJsonSafe(`/api/requests?${params.toString()}`),
       ]);
 
       if (!analyticsResponse.response.ok) {
         setStatus(`Analytics API unavailable (${analyticsResponse.response.status}). ${analyticsResponse.data?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
-        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
+        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
         return;
       }
 
       const devices = Array.isArray(analyticsResponse.data?.devices) ? analyticsResponse.data.devices : [];
-      const customers = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
+      const customersFromAnalytics = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
       const summary = requestsResponse.response.ok
         ? normalizeSummary(requestsResponse.data?.summary)
-        : { total: 0, byStatus: {}, byHour: {}, byDevice: {} };
+        : { total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
+      const customers = customersFromAnalytics.length
+        ? customersFromAnalytics
+        : Object.entries(summary.bySender || {})
+          .sort((a, b) => Number(b[1]) - Number(a[1]))
+          .slice(0, 5)
+          .map(([senderId, totalRequests]) => ({ senderId, totalRequests }));
 
       setStatus('');
       setData({ devices, customers });
       setRequestSummary(summary);
     })();
-  }, [timeframe]);
+  }, [timeframe, dateRange.start, dateRange.end]);
 
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
-        <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-          {timeframeOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={dateRange.start}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <input
+            type="date"
+            value={dateRange.end}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
+            {timeframeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
@@ -77,6 +101,7 @@ function normalizeSummary(summary) {
     byStatus: typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {},
     byHour: typeof summary?.byHour === 'object' && summary?.byHour ? summary.byHour : {},
     byDevice: typeof summary?.byDevice === 'object' && summary?.byDevice ? summary.byDevice : {},
+    bySender: typeof summary?.bySender === 'object' && summary?.bySender ? summary.bySender : {},
   };
 }
 
