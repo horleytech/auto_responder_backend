@@ -15,9 +15,14 @@ function isExpiredDashboardToken(token) {
   return expiresAt <= Date.now();
 }
 
-export function getDashboardSessionToken() {
-  if (typeof window === 'undefined') return '';
-  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY) || '';
+export function hasDashboardSession() {
+  if (typeof window === 'undefined') return false;
+  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY);
+  return !isExpiredDashboardToken(rawToken);
+}
+
+export async function fetchJsonSafe(url, options = {}) {
+  const rawToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
   const sessionToken = isExpiredDashboardToken(rawToken) ? '' : rawToken;
   if (rawToken && !sessionToken) saveDashboardToken('');
   return sessionToken;
@@ -70,4 +75,8 @@ export function saveDashboardToken(token) {
     return;
   }
   window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
+}
+
+if (typeof window !== 'undefined') {
+  window.hasDashboardSession = hasDashboardSession;
 }
