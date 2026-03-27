@@ -439,6 +439,17 @@ app.get('/api/catalog-mappings', async (req, res) => {
   const catalogDevices = catalog.getAllCatalogDevices();
 
   const dictionaryRows = await processor.listDictionary();
+  const csvAliasSet = new Set(csvMappings.map((row) => row.alias));
+  const manualMappings = dictionaryRows
+    .map((row) => ({
+      alias: catalog.normalizeDeviceName(row.slang),
+      normalizedName: catalog.normalizeDeviceName(row.normalizedName),
+      source: 'manual',
+    }))
+    .filter((row) => row.alias && row.normalizedName && !csvAliasSet.has(row.alias))
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+
+  const mergedMappings = [...csvMappings.map((row) => ({ ...row, source: 'csv' })), ...manualMappings];
   const seenMap = new Map();
 
   dictionaryRows.forEach((row) => {
@@ -473,6 +484,8 @@ app.get('/api/catalog-mappings', async (req, res) => {
 
   res.json({
     csvMappings,
+    manualMappings,
+    mergedMappings,
     catalogDevices,
     seenOutsideCatalog,
     lastLoadedAt: catalog.getLastLoadedAt(),

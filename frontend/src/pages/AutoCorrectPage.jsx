@@ -4,6 +4,8 @@ import { fetchJsonSafe } from '../lib/api';
 export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
   const [csvMappings, setCsvMappings] = useState([]);
+  const [manualMappings, setManualMappings] = useState([]);
+  const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
   const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
@@ -24,6 +26,8 @@ export default function AutoCorrectPage() {
     const { response, data } = await fetchJsonSafe('/api/catalog-mappings');
     if (!response.ok) return;
     setCsvMappings(data.csvMappings || []);
+    setManualMappings(data.manualMappings || []);
+    setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
     setSeenOutsideCatalog(data.seenOutsideCatalog || []);
     setLastLoadedAt(Number(data.lastLoadedAt || 0));
@@ -104,9 +108,28 @@ export default function AutoCorrectPage() {
           <button type="button" onClick={refreshCatalog} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white">Refresh CSV Now</button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          CSV map entries: {csvMappings.length} • catalog products: {catalogDevices.length}
+          Total active mappings: {mergedMappings.length} (CSV: {csvMappings.length}, Manual add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
+
+        {!!manualMappings.length && (
+          <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+            Manual mappings are additive: they are kept as extra mappings and do not overwrite CSV aliases.
+          </p>
+        )}
+
+        {!!mergedMappings.length && (
+          <details className="mb-4 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Active Mappings (CSV + Manual) ({mergedMappings.length})</summary>
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
+              {mergedMappings.map((row) => (
+                <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
+                  <span className="font-medium">[{row.source}]</span> {row.alias} → {row.normalizedName}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
 
         {!!csvMappings.length && (
           <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
