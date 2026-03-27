@@ -116,27 +116,10 @@ async function buildEffectiveMappings() {
     .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
     .sort((a, b) => a.alias.localeCompare(b.alias));
 
-  const dictionaryRows = await processor.listDictionary();
-  const csvAliasSet = new Set(csvMappings.map((row) => row.alias));
-  const learnedMappings = dictionaryRows
-    .map((row) => {
-      const alias = catalog.normalizeDeviceName(row.slang);
-      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
-      const source = row.autoLearned ? 'auto' : 'manual';
-      return { alias, normalizedName, source };
-    })
-    .filter((row) => row.alias && row.normalizedName)
-    .sort((a, b) => a.alias.localeCompare(b.alias));
-
-  const manualMappings = learnedMappings.filter((row) => !csvAliasSet.has(row.alias));
-
   const effectiveMap = new Map();
   csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
-  learnedMappings.forEach((row) => {
-    if (!effectiveMap.has(row.alias)) effectiveMap.set(row.alias, row.normalizedName);
-  });
 
-  return { csvMappings, learnedMappings, manualMappings, effectiveMap };
+  return { csvMappings, learnedMappings: [], manualMappings: [], effectiveMap };
 }
 
 function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
@@ -347,26 +330,6 @@ app.post('/api/bot-logic', async (req, res) => {
     catch (e) { console.error("Firebase logic save error:", e.message); }
   }
   return res.json({ success: true, ...next });
-});
-
-app.get('/api/dictionary', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  const rows = await processor.listDictionary();
-  res.json({ dictionary: rows });
-});
-
-app.post('/api/dictionary', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  try {
-    await processor.upsertDictionary(req.body || {});
-    res.json({ success: true });
-  } catch (err) { res.status(400).json({ error: err.message }); }
-});
-
-app.delete('/api/dictionary/:id', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  await processor.deleteDictionary(req.params.id);
-  res.json({ success: true });
 });
 
 app.get('/api/requests', async (req, res) => {
