@@ -15,10 +15,20 @@ function isExpiredDashboardToken(token) {
   return expiresAt <= Date.now();
 }
 
-export async function fetchJsonSafe(url, options = {}) {
-  const rawToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
+export function getDashboardSessionToken() {
+  if (typeof window === 'undefined') return '';
+  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY) || '';
   const sessionToken = isExpiredDashboardToken(rawToken) ? '' : rawToken;
   if (rawToken && !sessionToken) saveDashboardToken('');
+  return sessionToken;
+}
+
+export function hasDashboardSession() {
+  return Boolean(getDashboardSessionToken());
+}
+
+export async function fetchJsonSafe(url, options = {}) {
+  const sessionToken = getDashboardSessionToken();
   const finalOptions = {
     ...options,
     credentials: 'include',
