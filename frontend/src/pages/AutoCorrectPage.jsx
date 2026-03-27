@@ -4,6 +4,7 @@ import { fetchJsonSafe } from '../lib/api';
 export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
   const [csvMappings, setCsvMappings] = useState([]);
+  const [learnedMappings, setLearnedMappings] = useState([]);
   const [manualMappings, setManualMappings] = useState([]);
   const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
@@ -33,6 +34,7 @@ export default function AutoCorrectPage() {
     const { response, data } = await fetchJsonSafe('/api/catalog-mappings');
     if (!response.ok) return;
     setCsvMappings(data.csvMappings || []);
+    setLearnedMappings(data.learnedMappings || []);
     setManualMappings(data.manualMappings || []);
     setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
@@ -129,7 +131,7 @@ export default function AutoCorrectPage() {
           <button type="button" onClick={refreshCatalog} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white">Refresh CSV Now</button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Total active mappings: {mergedMappings.length} (CSV: {csvMappings.length}, Manual add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
+          Active mappings (from CSV): {csvMappings.length} • Learned mappings (CSV + Auto + Manual): {mergedMappings.length} (Manual/Auto add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
 
@@ -151,9 +153,19 @@ export default function AutoCorrectPage() {
           </p>
         )}
 
+        <details className="mb-4 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20" open>
+          <summary className="cursor-pointer text-sm font-medium">Active Mappings (CSV Only) ({csvMappings.length})</summary>
+          <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
+            {csvMappings.map((row) => (
+              <div key={`${row.alias}-${row.normalizedName}`}>{row.alias} → {row.normalizedName}</div>
+            ))}
+            {!csvMappings.length && <p className="text-xs text-slate-500">No active CSV mappings. Add rows to the arrangement CSV and refresh.</p>}
+          </div>
+        </details>
+
         {!!mergedMappings.length && (
-          <details className="mb-4 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20" open>
-            <summary className="cursor-pointer text-sm font-medium">Active Mappings (CSV + Manual) ({mergedMappings.length})</summary>
+          <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
+            <summary className="cursor-pointer text-sm font-medium">All Learned Mappings (CSV + Auto + Manual) ({mergedMappings.length})</summary>
             <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
               {mergedMappings.map((row) => (
                 <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
@@ -164,12 +176,14 @@ export default function AutoCorrectPage() {
           </details>
         )}
 
-        {!!csvMappings.length && (
-          <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
-            <summary className="cursor-pointer text-sm font-medium">CSV Arrangement Mappings ({csvMappings.length})</summary>
+        {!!learnedMappings.length && (
+          <details className="mb-4 rounded-lg bg-indigo-50 p-3 dark:bg-indigo-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Manual + Auto Learned Add-ons ({learnedMappings.length})</summary>
             <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
-              {csvMappings.map((row) => (
-                <div key={`${row.alias}-${row.normalizedName}`}>{row.alias} → {row.normalizedName}</div>
+              {learnedMappings.map((row) => (
+                <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
+                  <span className="font-medium">[{row.source}]</span> {row.alias} → {row.normalizedName}
+                </div>
               ))}
             </div>
           </details>
