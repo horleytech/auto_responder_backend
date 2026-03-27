@@ -4,6 +4,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
+import AutoCorrectPage from './pages/AutoCorrectPage';
 import LoginPage from './pages/LoginPage';
 import { fetchJsonSafe, hasDashboardSession, saveDashboardToken } from './lib/api';
 
@@ -78,6 +79,7 @@ export default function App() {
       <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
       {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
       {activePage === 'requests' && <RequestsPage />}
+      {activePage === 'auto-correct' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
       {activePage === 'settings' && (
         <SettingsPage

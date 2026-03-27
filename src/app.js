@@ -124,8 +124,31 @@ async function buildEffectiveMappings() {
 
   const effectiveMap = new Map();
   csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+  const dictionaryRows = await processor.listDictionary();
+  const learnedMappings = dictionaryRows
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row.slang);
+      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'dictionary' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  learnedMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
 
-  return { csvMappings, learnedMappings: [], manualMappings: [], effectiveMap };
+  const settings = await settingsStore.getSettings();
+  const manualMappings = (Array.isArray(settings.manualMappings) ? settings.manualMappings : [])
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row?.alias);
+      const normalizedName = catalog.normalizeDeviceName(row?.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'manual' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  manualMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  return { csvMappings, learnedMappings, manualMappings, effectiveMap };
 }
 
 function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
@@ -336,6 +359,36 @@ app.post('/api/bot-logic', async (req, res) => {
     catch (e) { console.error("Firebase logic save error:", e.message); }
   }
   return res.json({ success: true, ...next });
+});
+
+app.get('/api/dictionary', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    const dictionary = await processor.listDictionary();
+    return res.json({ dictionary });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to load dictionary' });
+  }
+});
+
+app.post('/api/dictionary', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    await processor.upsertDictionary(req.body || {});
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to save mapping' });
+  }
+});
+
+app.delete('/api/dictionary/:id', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  try {
+    await processor.deleteDictionary(String(req.params.id || ''));
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to delete mapping' });
+  }
 });
 
 app.get('/api/requests', async (req, res) => {
