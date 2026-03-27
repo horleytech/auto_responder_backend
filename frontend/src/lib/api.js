@@ -43,7 +43,7 @@ export async function fetchJsonSafe(url, options = {}) {
 
   const normalizedUrl = String(url || '');
   const isAuthRoute = normalizedUrl.includes('/api/login');
-  if ((response.status === 401 || response.status === 403) && !isAuthRoute) {
+  if (response.status === 401 && !isAuthRoute) {
     saveDashboardToken('');
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('dashboard-auth-expired', { detail: { status: response.status, url: normalizedUrl } }));
