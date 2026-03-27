@@ -3,10 +3,27 @@ import { fetchJsonSafe } from '../lib/api';
 
 export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
+  const [csvMappings, setCsvMappings] = useState([]);
+  const [manualMappings, setManualMappings] = useState([]);
+  const [mergedMappings, setMergedMappings] = useState([]);
+  const [catalogDevices, setCatalogDevices] = useState([]);
+  const [removedFromCsv, setRemovedFromCsv] = useState([]);
+  const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
+  const [lastLoadedAt, setLastLoadedAt] = useState(0);
   const [slang, setSlang] = useState('');
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
   const [status, setStatus] = useState('');
+
+  const normalizedOptions = Array.from(new Set([
+    ...catalogDevices,
+    ...seenOutsideCatalog.map((row) => row.normalizedName).filter(Boolean),
+    ...mergedMappings.map((row) => row.normalizedName).filter(Boolean),
+  ])).sort((a, b) => a.localeCompare(b));
+
+  const displayMappings = mergedMappings.length
+    ? mergedMappings
+    : catalogDevices.map((name) => ({ alias: name, normalizedName: name, source: 'catalog' }));
 
   async function load() {
     const { response, data } = await fetchJsonSafe('/api/dictionary');
@@ -14,6 +31,28 @@ export default function AutoCorrectPage() {
     const nextRows = data.dictionary || [];
     setRows(nextRows);
     setStatus(nextRows.length ? `Loaded ${nextRows.length} mapping(s).` : 'No mappings saved yet.');
+  }
+
+  async function loadCatalogMappings() {
+    const { response, data } = await fetchJsonSafe('/api/catalog-mappings');
+    if (!response.ok) return;
+    setCsvMappings(data.csvMappings || []);
+    setManualMappings(data.manualMappings || []);
+    setMergedMappings(data.mergedMappings || []);
+    setCatalogDevices(data.catalogDevices || []);
+    setRemovedFromCsv(data.removedFromCsv || []);
+    setSeenOutsideCatalog(data.seenOutsideCatalog || []);
+    setLastLoadedAt(Number(data.lastLoadedAt || 0));
+  }
+
+  async function refreshCatalog() {
+    const { response, data } = await fetchJsonSafe('/api/catalog-refresh', { method: 'POST' });
+    if (!response.ok) {
+      setStatus(`Catalog refresh failed (${response.status}): ${data.error || 'Unknown error'}`);
+      return;
+    }
+    await loadCatalogMappings();
+    setStatus(`Catalog refreshed. ${data.newCount || 0} new, ${data.usedCount || 0} used, ${data.arrangementCount || 0} mappings.`);
   }
 
   function startEdit(row) {
@@ -48,6 +87,13 @@ export default function AutoCorrectPage() {
 
   useEffect(() => {
     load();
+    loadCatalogMappings();
+
+    const timer = setInterval(() => {
+      loadCatalogMappings();
+    }, 120000);
+
+    return () => clearInterval(timer);
   }, []);
 
   return (
@@ -55,11 +101,24 @@ export default function AutoCorrectPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="mb-4 text-xl font-semibold">Auto Correct Dictionary</h2>
         <p className="mb-4 text-sm text-slate-500">
-          This dictionary is primarily auto-learned by the bot from real requests. Use this form only when you want to override or pre-seed a mapping.
+          Add mapping aliases here. Pick an existing product from active mappings (or type a new one) and it will be added as an extra mapping.
         </p>
         <div className="grid gap-3 md:grid-cols-2">
-          <input value={slang} onChange={(e) => setSlang(e.target.value)} placeholder="slang e.g. 15 pm" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
-          <input value={normalizedName} onChange={(e) => setNormalizedName(e.target.value)} placeholder="normalized e.g. iPhone 15 Pro Max" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+          <input value={slang} onChange={(e) => setSlang(e.target.value)} placeholder="alias/customer wording e.g. 15 pm" className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+          <>
+            <input
+              list="normalized-product-options"
+              value={normalizedName}
+              onChange={(e) => setNormalizedName(e.target.value)}
+              placeholder="choose or type product mapping"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+            />
+            <datalist id="normalized-product-options">
+              {normalizedOptions.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          </>
         </div>
         <div className="mt-3 flex gap-2">
           <button type="button" onClick={save} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">{editingId ? 'Save Edit' : 'Add Mapping'}</button>
@@ -69,7 +128,89 @@ export default function AutoCorrectPage() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="mb-3 text-lg font-semibold">Current Mappings</h3>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-semibold">Current Mappings</h3>
+          <button type="button" onClick={refreshCatalog} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white">Refresh CSV Now</button>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Total active mappings: {displayMappings.length} (CSV: {csvMappings.length}, Manual add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
+          {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
+        </p>
+
+        {!mergedMappings.length && !!catalogDevices.length && (
+          <p className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-300">
+            No explicit CSV alias map found yet, so showing identity mappings from active catalog products.
+          </p>
+        )}
+
+        {!!removedFromCsv.length && (
+          <details className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-700/40 dark:bg-orange-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Previously in CSV, currently removed ({removedFromCsv.length})</summary>
+            <p className="mt-1 text-xs text-orange-700 dark:text-orange-300">
+              If any of these products return to the CSV, they will automatically move back into active CSV mappings.
+            </p>
+            <div className="mt-2 max-h-56 space-y-1 overflow-auto text-sm">
+              {removedFromCsv.map((name) => <div key={name}>{name}</div>)}
+            </div>
+          </details>
+        )}
+
+        {!!manualMappings.length && (
+          <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+            Manual mappings are additive: they are kept as extra mappings and do not overwrite CSV aliases.
+          </p>
+        )}
+
+        {!!displayMappings.length && (
+          <details className="mb-4 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Active Mappings (CSV + Manual) ({displayMappings.length})</summary>
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
+              {displayMappings.map((row) => (
+                <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
+                  <span className="font-medium">[{row.source}]</span> {row.alias} → {row.normalizedName}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!!rows.length && (
+          <details className="mb-4 rounded-lg bg-indigo-50 p-3 dark:bg-indigo-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Dictionary Mappings Saved ({rows.length})</summary>
+            <div className="mt-2 max-h-64 space-y-1 overflow-auto text-sm">
+              {rows.map((row) => (
+                <div key={row.id}><span className="font-medium">[dictionary]</span> {row.slang} → {row.normalizedName}</div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!!csvMappings.length && (
+          <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
+            <summary className="cursor-pointer text-sm font-medium">CSV Arrangement Mappings ({csvMappings.length})</summary>
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
+              {csvMappings.map((row) => (
+                <div key={`${row.alias}-${row.normalizedName}`}>{row.alias} → {row.normalizedName}</div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!!seenOutsideCatalog.length && (
+          <details className="mb-4 rounded-lg bg-amber-50 p-3 dark:bg-amber-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Seen but not in CSV ({seenOutsideCatalog.length})</summary>
+            <div className="mt-2 space-y-2 text-sm">
+              {seenOutsideCatalog.map((row) => (
+                <div key={row.normalizedName} className="rounded bg-white p-2 dark:bg-slate-900">
+                  <div className="font-medium">{row.normalizedName}</div>
+                  <div className="text-xs text-slate-500">source: {row.source}</div>
+                  {!!row.aliases?.length && <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">examples: {row.aliases.join(' | ')}</div>}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
         <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
