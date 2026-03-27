@@ -55,6 +55,12 @@ const REQUEST_STATUSES = {
   NO_MATCH: 'no_match',
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
+const MAX_REQUEST_ROWS_FOR_ANALYTICS = 1200;
+const MAX_REQUEST_ROWS_FOR_DASHBOARD = 50;
+
+function normalizeRequestStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -339,7 +345,7 @@ app.get('/api/requests', async (req, res) => {
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      const key = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -370,15 +376,15 @@ app.get('/api/requests', async (req, res) => {
   };
 
   try {
-    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
+    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(MAX_REQUEST_ROWS_FOR_ANALYTICS).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const requests = rows.filter((row) => {
-      if (!PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim())) return false;
+      if (!PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status))) return false;
       const time = requestTimestamp(row);
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
     });
-    res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
+    res.json({ requests: requests.slice(0, MAX_REQUEST_ROWS_FOR_DASHBOARD), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
@@ -437,7 +443,7 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()))
+          .filter((row) => PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status)))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;

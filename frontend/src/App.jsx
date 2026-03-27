@@ -5,10 +5,11 @@ import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe, saveDashboardToken } from './lib/api';
+import { fetchJsonSafe, hasDashboardSession, saveDashboardToken } from './lib/api';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(hasDashboardSession());
+  const [authBootstrapping, setAuthBootstrapping] = useState(true);
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
@@ -22,6 +23,19 @@ export default function App() {
     const onAuthExpired = () => setIsAuthenticated(false);
     window.addEventListener('dashboard-auth-expired', onAuthExpired);
     return () => window.removeEventListener('dashboard-auth-expired', onAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    if (!hasDashboardSession()) {
+      setAuthBootstrapping(false);
+      return;
+    }
+    (async () => {
+      const sessionResult = await fetchJsonSafe('/api/providers');
+      setIsAuthenticated(Boolean(sessionResult.response?.ok));
+      if (!sessionResult.response?.ok) saveDashboardToken('');
+      setAuthBootstrapping(false);
+    })();
   }, []);
 
   // Fetch Dashboard data ONLY if logged in
@@ -48,6 +62,14 @@ export default function App() {
   }, [isAuthenticated]);
 
   // THE LOCK SCREEN
+  if (authBootstrapping) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
+        <p className="text-sm text-slate-500 dark:text-slate-400">Restoring session...</p>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
   }
