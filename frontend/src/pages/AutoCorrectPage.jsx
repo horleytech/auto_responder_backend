@@ -3,6 +3,10 @@ import { fetchJsonSafe } from '../lib/api';
 
 export default function AutoCorrectPage() {
   const [rows, setRows] = useState([]);
+  const [csvMappings, setCsvMappings] = useState([]);
+  const [catalogDevices, setCatalogDevices] = useState([]);
+  const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
+  const [lastLoadedAt, setLastLoadedAt] = useState(0);
   const [slang, setSlang] = useState('');
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
@@ -14,6 +18,25 @@ export default function AutoCorrectPage() {
     const nextRows = data.dictionary || [];
     setRows(nextRows);
     setStatus(nextRows.length ? `Loaded ${nextRows.length} mapping(s).` : 'No mappings saved yet.');
+  }
+
+  async function loadCatalogMappings() {
+    const { response, data } = await fetchJsonSafe('/api/catalog-mappings');
+    if (!response.ok) return;
+    setCsvMappings(data.csvMappings || []);
+    setCatalogDevices(data.catalogDevices || []);
+    setSeenOutsideCatalog(data.seenOutsideCatalog || []);
+    setLastLoadedAt(Number(data.lastLoadedAt || 0));
+  }
+
+  async function refreshCatalog() {
+    const { response, data } = await fetchJsonSafe('/api/catalog-refresh', { method: 'POST' });
+    if (!response.ok) {
+      setStatus(`Catalog refresh failed (${response.status}): ${data.error || 'Unknown error'}`);
+      return;
+    }
+    await loadCatalogMappings();
+    setStatus(`Catalog refreshed. ${data.newCount || 0} new, ${data.usedCount || 0} used, ${data.arrangementCount || 0} mappings.`);
   }
 
   function startEdit(row) {
@@ -48,6 +71,13 @@ export default function AutoCorrectPage() {
 
   useEffect(() => {
     load();
+    loadCatalogMappings();
+
+    const timer = setInterval(() => {
+      loadCatalogMappings();
+    }, 120000);
+
+    return () => clearInterval(timer);
   }, []);
 
   return (
@@ -69,7 +99,41 @@ export default function AutoCorrectPage() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="mb-3 text-lg font-semibold">Current Mappings</h3>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-semibold">Current Mappings</h3>
+          <button type="button" onClick={refreshCatalog} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white">Refresh CSV Now</button>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          CSV map entries: {csvMappings.length} • catalog products: {catalogDevices.length}
+          {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
+        </p>
+
+        {!!csvMappings.length && (
+          <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
+            <summary className="cursor-pointer text-sm font-medium">CSV Arrangement Mappings ({csvMappings.length})</summary>
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
+              {csvMappings.map((row) => (
+                <div key={`${row.alias}-${row.normalizedName}`}>{row.alias} → {row.normalizedName}</div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!!seenOutsideCatalog.length && (
+          <details className="mb-4 rounded-lg bg-amber-50 p-3 dark:bg-amber-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Seen but not in CSV ({seenOutsideCatalog.length})</summary>
+            <div className="mt-2 space-y-2 text-sm">
+              {seenOutsideCatalog.map((row) => (
+                <div key={row.normalizedName} className="rounded bg-white p-2 dark:bg-slate-900">
+                  <div className="font-medium">{row.normalizedName}</div>
+                  <div className="text-xs text-slate-500">source: {row.source}</div>
+                  {!!row.aliases?.length && <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">examples: {row.aliases.join(' | ')}</div>}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
         <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
