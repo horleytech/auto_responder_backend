@@ -8,7 +8,8 @@ export default function AutoCorrectPage() {
   const [manualMappings, setManualMappings] = useState([]);
   const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
-  const [removedFromCsv, setRemovedFromCsv] = useState([]);
+  const [activeProductGroups, setActiveProductGroups] = useState([]);
+  const [inactiveProductGroups, setInactiveProductGroups] = useState([]);
   const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
   const [slang, setSlang] = useState('');
@@ -38,7 +39,8 @@ export default function AutoCorrectPage() {
     setManualMappings(data.manualMappings || []);
     setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
-    setRemovedFromCsv(data.removedFromCsv || []);
+    setActiveProductGroups(data.activeProductGroups || []);
+    setInactiveProductGroups(data.inactiveProductGroups || []);
     setSeenOutsideCatalog(data.seenOutsideCatalog || []);
     setLastLoadedAt(Number(data.lastLoadedAt || 0));
   }
@@ -51,6 +53,18 @@ export default function AutoCorrectPage() {
     }
     await loadCatalogMappings();
     setStatus(`Catalog refreshed. ${data.newCount || 0} new, ${data.usedCount || 0} used, ${data.arrangementCount || 0} mappings.`);
+  }
+
+  async function nukeInactiveMappings() {
+    const confirmed = window.confirm('This will permanently clear all inactive mappings. Continue?');
+    if (!confirmed) return;
+    const { response } = await fetchJsonSafe('/api/catalog-mappings/inactive/nuke', { method: 'POST' });
+    if (!response.ok) {
+      setStatus('Failed to clear inactive mappings.');
+      return;
+    }
+    await loadCatalogMappings();
+    setStatus('Inactive mappings cleared.');
   }
 
   function startEdit(row) {
@@ -135,59 +149,70 @@ export default function AutoCorrectPage() {
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
 
-        {!!removedFromCsv.length && (
-          <details className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-700/40 dark:bg-orange-950/20" open>
-            <summary className="cursor-pointer text-sm font-medium">Previously in CSV, currently removed ({removedFromCsv.length})</summary>
-            <p className="mt-1 text-xs text-orange-700 dark:text-orange-300">
-              If any of these products return to the CSV, they will automatically move back into active CSV mappings.
-            </p>
-            <div className="mt-2 max-h-56 space-y-1 overflow-auto text-sm">
-              {removedFromCsv.map((name) => <div key={name}>{name}</div>)}
-            </div>
-          </details>
-        )}
-
         {!!manualMappings.length && (
           <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300">
             Manual mappings are additive: they are kept as extra mappings and do not overwrite CSV aliases.
           </p>
         )}
 
-        <details className="mb-4 rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/20" open>
-          <summary className="cursor-pointer text-sm font-medium">Active Mappings (CSV Only) ({csvMappings.length})</summary>
-          <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
-            {csvMappings.map((row) => (
-              <div key={`${row.alias}-${row.normalizedName}`}>{row.alias} → {row.normalizedName}</div>
+        <details className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 shadow-sm dark:border-indigo-800/50 dark:bg-indigo-950/30" open>
+          <summary className="cursor-pointer rounded-lg px-1 py-1 text-base font-semibold transition hover:bg-indigo-100 dark:hover:bg-indigo-900/30">
+            Active Mappings ({activeProductGroups.length} products)
+          </summary>
+          <div className="mt-3 space-y-2">
+            {activeProductGroups.map((group) => (
+              <details key={group.product} className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900" open>
+                <summary className="cursor-pointer rounded-md px-2 py-2 font-medium transition hover:bg-slate-100 dark:hover:bg-slate-800">
+                  {group.product} <span className="text-xs text-slate-500">({group.aliases.length} matches)</span>
+                </summary>
+                <div className="mt-2 grid gap-1 px-2 pb-1 text-sm">
+                  {group.aliases.map((alias) => (
+                    <div key={`${group.product}-${alias}`} className="rounded-md bg-slate-100 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      {alias}
+                    </div>
+                  ))}
+                </div>
+              </details>
             ))}
-            {!csvMappings.length && <p className="text-xs text-slate-500">No active CSV mappings. Add rows to the arrangement CSV and refresh.</p>}
+            {!activeProductGroups.length && (
+              <p className="rounded-lg bg-white px-3 py-2 text-sm text-slate-500 dark:bg-slate-900">No active products in CSV yet.</p>
+            )}
           </div>
         </details>
 
-        {!!mergedMappings.length && (
-          <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
-            <summary className="cursor-pointer text-sm font-medium">All Learned Mappings (CSV + Auto + Manual) ({mergedMappings.length})</summary>
-            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
-              {mergedMappings.map((row) => (
-                <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
-                  <span className="font-medium">[{row.source}]</span> {row.alias} → {row.normalizedName}
+        <details className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm dark:border-amber-800/40 dark:bg-amber-950/20" open>
+          <summary className="cursor-pointer rounded-lg px-1 py-1 text-base font-semibold transition hover:bg-amber-100 dark:hover:bg-amber-900/30">
+            Inactive Mappings ({inactiveProductGroups.length} products)
+          </summary>
+          <div className="mt-2 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={nukeInactiveMappings}
+              className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-rose-700"
+            >
+              Nuke All Inactive
+            </button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {inactiveProductGroups.map((group) => (
+              <details key={`inactive-${group.product}`} className="rounded-lg border border-amber-200 bg-white p-2 dark:border-amber-700/40 dark:bg-slate-900" open>
+                <summary className="cursor-pointer rounded-md px-2 py-2 font-medium transition hover:bg-amber-100 dark:hover:bg-amber-900/20">
+                  {group.product} <span className="text-xs text-slate-500">({group.aliases.length} saved mappings)</span>
+                </summary>
+                <div className="mt-2 grid gap-1 px-2 pb-1 text-sm">
+                  {group.aliases.map((alias) => (
+                    <div key={`inactive-${group.product}-${alias}`} className="rounded-md bg-amber-100 px-2 py-1 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
+                      {alias}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </details>
-        )}
-
-        {!!learnedMappings.length && (
-          <details className="mb-4 rounded-lg bg-indigo-50 p-3 dark:bg-indigo-950/20" open>
-            <summary className="cursor-pointer text-sm font-medium">Manual + Auto Learned Add-ons ({learnedMappings.length})</summary>
-            <div className="mt-2 max-h-72 space-y-1 overflow-auto text-sm">
-              {learnedMappings.map((row) => (
-                <div key={`${row.source}-${row.alias}-${row.normalizedName}`}>
-                  <span className="font-medium">[{row.source}]</span> {row.alias} → {row.normalizedName}
-                </div>
-              ))}
-            </div>
-          </details>
-        )}
+              </details>
+            ))}
+            {!inactiveProductGroups.length && (
+              <p className="rounded-lg bg-white px-3 py-2 text-sm text-slate-500 dark:bg-slate-900">No inactive products archived yet.</p>
+            )}
+          </div>
+        </details>
 
         {!!seenOutsideCatalog.length && (
           <details className="mb-4 rounded-lg bg-amber-50 p-3 dark:bg-amber-950/20" open>

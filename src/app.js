@@ -139,6 +139,41 @@ async function buildEffectiveMappings() {
   return { csvMappings, learnedMappings, manualMappings, effectiveMap };
 }
 
+function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
+  const nextArchive = { ...(existingArchive || {}) };
+  incomingGroups.forEach((group) => {
+    const product = catalog.normalizeDeviceName(group.product);
+    if (!product) return;
+    const current = nextArchive[product] || { product, aliases: [], sources: [], updatedAt: 0 };
+    const aliasSet = new Set((current.aliases || []).map((alias) => catalog.normalizeDeviceName(alias)).filter(Boolean));
+    const sourceSet = new Set((current.sources || []).filter(Boolean));
+    (group.aliases || []).forEach((alias) => {
+      const normalizedAlias = catalog.normalizeDeviceName(alias);
+      if (normalizedAlias) aliasSet.add(normalizedAlias);
+    });
+    (group.sources || []).forEach((source) => sourceSet.add(source));
+    nextArchive[product] = {
+      product,
+      aliases: Array.from(aliasSet).sort(),
+      sources: Array.from(sourceSet).sort(),
+      updatedAt: Date.now(),
+    };
+  });
+  return nextArchive;
+}
+
+function formatProductGroupsFromArchive(archive = {}, activeProducts = new Set()) {
+  return Object.values(archive)
+    .filter((entry) => entry?.product && !activeProducts.has(entry.product))
+    .map((entry) => ({
+      product: entry.product,
+      aliases: Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean).sort() : [],
+      sources: Array.isArray(entry.sources) ? entry.sources.filter(Boolean).sort() : [],
+      updatedAt: Number(entry.updatedAt || 0),
+    }))
+    .sort((a, b) => a.product.localeCompare(b.product));
+}
+
 function resolveExpectedApiKey() {
   return String(process.env.API_KEY || runtimeApiKey || API_KEY).trim();
 }
@@ -479,6 +514,7 @@ app.get('/api/catalog-mappings', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
 
   const { csvMappings, learnedMappings, manualMappings } = await buildEffectiveMappings();
+  const settings = await settingsStore.getSettings();
   const catalogDevices = catalog.getAllCatalogDevices();
   const mergedMappings = [...csvMappings, ...manualMappings];
   const historicalCatalogDevices = catalog.getHistoricalDevices();
@@ -517,6 +553,67 @@ app.get('/api/catalog-mappings', async (req, res) => {
     aliases: Array.from(item.aliases).filter(Boolean).slice(0, 3),
   })).sort((a, b) => a.normalizedName.localeCompare(b.normalizedName));
 
+  const activeProducts = Array.from(new Set(csvMappings.map((row) => row.normalizedName))).sort();
+  const activeProductSet = new Set(activeProducts);
+
+  const activeProductGroupMap = new Map();
+  mergedMappings.forEach((row) => {
+    if (!activeProductSet.has(row.normalizedName)) return;
+    const bucket = activeProductGroupMap.get(row.normalizedName) || { product: row.normalizedName, aliases: new Set(), sources: new Set() };
+    bucket.aliases.add(row.alias);
+    bucket.sources.add(row.source);
+    activeProductGroupMap.set(row.normalizedName, bucket);
+  });
+
+  const activeProductGroups = Array.from(activeProductGroupMap.values())
+    .map((group) => ({
+      product: group.product,
+      aliases: Array.from(group.aliases).sort(),
+      sources: Array.from(group.sources).sort(),
+    }))
+    .sort((a, b) => a.product.localeCompare(b.product));
+
+  const inactiveCandidates = [];
+  learnedMappings.forEach((row) => {
+    if (activeProductSet.has(row.normalizedName)) return;
+    inactiveCandidates.push({
+      product: row.normalizedName,
+      aliases: [row.alias],
+      sources: [row.source],
+    });
+  });
+
+  const previousActiveSnapshot = settings.lastActiveCsvProductMappings || {};
+  Object.entries(previousActiveSnapshot).forEach(([product, aliases]) => {
+    const normalizedProduct = catalog.normalizeDeviceName(product);
+    if (!normalizedProduct || activeProductSet.has(normalizedProduct)) return;
+    const safeAliases = Array.isArray(aliases) ? aliases : [];
+    inactiveCandidates.push({
+      product: normalizedProduct,
+      aliases: safeAliases,
+      sources: ['csv-history'],
+    });
+  });
+
+  const mergedArchive = mergeArchiveProductMappings(settings.inactiveMappingArchive || {}, inactiveCandidates);
+  const inactiveProductGroups = formatProductGroupsFromArchive(mergedArchive, activeProductSet);
+
+  const nextActiveSnapshot = activeProductGroups.reduce((acc, group) => {
+    acc[group.product] = group.aliases;
+    return acc;
+  }, {});
+
+  const previousSnapshotJson = JSON.stringify(previousActiveSnapshot);
+  const nextSnapshotJson = JSON.stringify(nextActiveSnapshot);
+  const previousArchiveJson = JSON.stringify(settings.inactiveMappingArchive || {});
+  const nextArchiveJson = JSON.stringify(mergedArchive);
+  if (previousSnapshotJson !== nextSnapshotJson || previousArchiveJson !== nextArchiveJson) {
+    await settingsStore.updateSettings({
+      inactiveMappingArchive: mergedArchive,
+      lastActiveCsvProductMappings: nextActiveSnapshot,
+    });
+  }
+
   res.json({
     csvMappings,
     learnedMappings,
@@ -525,8 +622,16 @@ app.get('/api/catalog-mappings', async (req, res) => {
     catalogDevices,
     removedFromCsv,
     seenOutsideCatalog,
+    activeProductGroups,
+    inactiveProductGroups,
     lastLoadedAt: catalog.getLastLoadedAt(),
   });
+});
+
+app.post('/api/catalog-mappings/inactive/nuke', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  await settingsStore.updateSettings({ inactiveMappingArchive: {} });
+  return res.json({ success: true });
 });
 
 app.post('/api/catalog-refresh', async (req, res) => {
