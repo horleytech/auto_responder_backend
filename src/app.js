@@ -228,7 +228,11 @@ app.post('/api/catalog-source', async (req, res) => {
   catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await settingsStore.updateSettings({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+  await settingsStore.updateSettings({
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
+  });
+  await persistCatalogHistory();
   return res.json({ success: true, ...loaded });
 });
 
@@ -259,22 +263,32 @@ app.post('/api/bot-logic', async (req, res) => {
 
 app.get('/api/dictionary', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  const rows = await processor.listDictionary();
-  res.json({ dictionary: rows });
+  try {
+    const dictionary = await processor.listDictionary();
+    return res.json({ dictionary });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to load dictionary' });
+  }
 });
 
 app.post('/api/dictionary', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   try {
     await processor.upsertDictionary(req.body || {});
-    res.json({ success: true });
-  } catch (err) { res.status(400).json({ error: err.message }); }
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to save mapping' });
+  }
 });
 
 app.delete('/api/dictionary/:id', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  await processor.deleteDictionary(req.params.id);
-  res.json({ success: true });
+  try {
+    await processor.deleteDictionary(String(req.params.id || ''));
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Failed to delete mapping' });
+  }
 });
 
 app.get('/api/requests', async (req, res) => {
@@ -344,22 +358,243 @@ app.get('/api/clean-analytics', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const timeframe = String(req.query.timeframe || '1m').toLowerCase();
   const now = Date.now();
-  const since = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
+  const defaultSince = timeframe === '1w' ? now - 7 * 86400000 : timeframe === '1m' ? now - 30 * 86400000 : 0;
+  const { start, end } = parseDateRange(req.query || {});
+  const since = req.query.start ? start : defaultSince;
+  const until = req.query.end ? end : Number.POSITIVE_INFINITY;
   let devices = [], customers = [];
+  let summaryFromRaw = null;
   if (firestore) {
     try {
       const [aSnap, cSnap] = await Promise.all([
         firestore.collection('ar_analytics').orderBy('requestCount', 'desc').get(),
         firestore.collection('ar_customers').orderBy('totalRequests', 'desc').get()
       ]);
-      devices = aSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastRequestAt || d.lastRequestAt >= since).slice(0, 10);
-      customers = cSnap.docs.map((d) => d.data()).filter((d) => !since || !d.lastActive || d.lastActive >= since).slice(0, 5);
+      devices = aSnap.docs.map((d) => d.data()).filter((d) => {
+        if (!since && !Number.isFinite(until)) return true;
+        const at = Number(d.lastRequestAt || 0);
+        return at >= since && at <= until;
+      }).slice(0, 10);
+      customers = cSnap.docs.map((d) => d.data()).filter((d) => {
+        if (!since && !Number.isFinite(until)) return true;
+        const at = Number(d.lastActive || 0);
+        return at >= since && at <= until;
+      }).slice(0, 5);
+
+      if (!customers.length || !devices.length) {
+        const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
+        const persisted = rawSnap.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((row) => PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status)))
+          .filter((row) => {
+            const at = requestTimestamp(row);
+            return Number.isFinite(at) ? at >= since && at <= until : true;
+          });
+
+        if (persisted.length) {
+          summaryFromRaw = persisted.reduce((acc, row) => {
+            const status = normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH;
+            const deviceName = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+            const at = requestTimestamp(row);
+            acc.total += 1;
+            acc.byStatus[status] = (acc.byStatus[status] || 0) + 1;
+            if (deviceName) acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + 1;
+            if (Number.isFinite(at)) {
+              const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+              acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + 1;
+            }
+            return acc;
+          }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+        }
+
+        if (!devices.length) {
+          const byDevice = persisted.reduce((acc, row) => {
+            const deviceName = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+            if (!deviceName) return acc;
+            acc[deviceName] = (acc[deviceName] || 0) + 1;
+            return acc;
+          }, {});
+          devices = Object.entries(byDevice)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([deviceName, requestCount]) => ({ deviceName, requestCount }));
+        }
+
+        if (!customers.length) {
+          const byCustomer = persisted.reduce((acc, row) => {
+            const senderId = String(row.senderId || 'Unknown').trim() || 'Unknown';
+            acc[senderId] = (acc[senderId] || 0) + 1;
+            return acc;
+          }, {});
+          customers = Object.entries(byCustomer)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([senderId, totalRequests]) => ({ senderId, totalRequests }));
+        }
+      }
     } catch (e) { console.error("Firebase analytics read error:", e.message); }
   }
-  res.json({ devices, customers, timeframe });
+  const summaryFromDevices = devices.reduce((acc, row) => {
+    const deviceName = String(row.deviceName || '').trim();
+    const count = Number(row.requestCount || 0);
+    if (!deviceName || count <= 0) return acc;
+    acc.total += count;
+    acc.byDevice[deviceName] = (acc.byDevice[deviceName] || 0) + count;
+    const at = Number(row.lastRequestAt || 0);
+    if (Number.isFinite(at) && at > 0) {
+      const hourBucket = new Date(at).toISOString().slice(0, 13) + ':00';
+      acc.byHour[hourBucket] = (acc.byHour[hourBucket] || 0) + count;
+    }
+    return acc;
+  }, { total: 0, byStatus: {}, byDevice: {}, byHour: {} });
+  if (!summaryFromRaw && summaryFromDevices.total > 0) {
+    summaryFromDevices.byStatus[REQUEST_STATUSES.REPLIED] = summaryFromDevices.total;
+  }
+  const summary = summaryFromRaw || summaryFromDevices;
+
+  res.json({
+    devices,
+    customers,
+    summary,
+    timeframe,
+    start: since || null,
+    end: Number.isFinite(until) ? until : null,
+  });
 });
 
-app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized }));
+app.get('/api/catalog-mappings', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+
+  const { csvMappings, learnedMappings, manualMappings } = await buildEffectiveMappings();
+  const settings = await settingsStore.getSettings();
+  const catalogDevices = catalog.getAllCatalogDevices();
+  const mergedMappings = [...csvMappings, ...manualMappings];
+  const historicalCatalogDevices = catalog.getHistoricalDevices();
+  const historicalSet = new Set(historicalCatalogDevices);
+  catalogDevices.forEach((name) => historicalSet.delete(name));
+  const removedFromCsv = Array.from(historicalSet).sort();
+  const seenMap = new Map();
+
+  learnedMappings.forEach((row) => {
+    const normalizedName = String(row.normalizedName || '').trim();
+    if (!normalizedName || catalogDevices.includes(normalizedName)) return;
+    if (!seenMap.has(normalizedName)) {
+      seenMap.set(normalizedName, { normalizedName, source: 'dictionary', aliases: new Set([String(row.alias || '').trim()]) });
+    }
+  });
+
+  if (firestore) {
+    try {
+      const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(800).get();
+      rawSnap.docs.forEach((doc) => {
+        const row = doc.data() || {};
+        const normalizedName = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+        if (!normalizedName || catalogDevices.includes(normalizedName.toLowerCase())) return;
+        const item = seenMap.get(normalizedName) || { normalizedName, source: 'requests', aliases: new Set() };
+        item.aliases.add(String(row.senderMessage || '').slice(0, 80));
+        seenMap.set(normalizedName, item);
+      });
+    } catch (err) {
+      console.error('Failed to read raw requests for mapping insights:', err.message);
+    }
+  }
+
+  const seenOutsideCatalog = Array.from(seenMap.values()).map((item) => ({
+    normalizedName: item.normalizedName,
+    source: item.source,
+    aliases: Array.from(item.aliases).filter(Boolean).slice(0, 3),
+  })).sort((a, b) => a.normalizedName.localeCompare(b.normalizedName));
+
+  const activeProducts = Array.from(new Set(csvMappings.map((row) => row.normalizedName))).sort();
+  const activeProductSet = new Set(activeProducts);
+
+  const activeProductGroupMap = new Map();
+  mergedMappings.forEach((row) => {
+    if (!activeProductSet.has(row.normalizedName)) return;
+    const bucket = activeProductGroupMap.get(row.normalizedName) || { product: row.normalizedName, aliases: new Set(), sources: new Set() };
+    bucket.aliases.add(row.alias);
+    bucket.sources.add(row.source);
+    activeProductGroupMap.set(row.normalizedName, bucket);
+  });
+
+  const activeProductGroups = Array.from(activeProductGroupMap.values())
+    .map((group) => ({
+      product: group.product,
+      aliases: Array.from(group.aliases).sort(),
+      sources: Array.from(group.sources).sort(),
+    }))
+    .sort((a, b) => a.product.localeCompare(b.product));
+
+  const inactiveCandidates = [];
+  learnedMappings.forEach((row) => {
+    if (activeProductSet.has(row.normalizedName)) return;
+    inactiveCandidates.push({
+      product: row.normalizedName,
+      aliases: [row.alias],
+      sources: [row.source],
+    });
+  });
+
+  const previousActiveSnapshot = settings.lastActiveCsvProductMappings || {};
+  Object.entries(previousActiveSnapshot).forEach(([product, aliases]) => {
+    const normalizedProduct = catalog.normalizeDeviceName(product);
+    if (!normalizedProduct || activeProductSet.has(normalizedProduct)) return;
+    const safeAliases = Array.isArray(aliases) ? aliases : [];
+    inactiveCandidates.push({
+      product: normalizedProduct,
+      aliases: safeAliases,
+      sources: ['csv-history'],
+    });
+  });
+
+  const mergedArchive = mergeArchiveProductMappings(settings.inactiveMappingArchive || {}, inactiveCandidates);
+  const inactiveProductGroups = formatProductGroupsFromArchive(mergedArchive, activeProductSet);
+
+  const nextActiveSnapshot = activeProductGroups.reduce((acc, group) => {
+    acc[group.product] = group.aliases;
+    return acc;
+  }, {});
+
+  const previousSnapshotJson = JSON.stringify(previousActiveSnapshot);
+  const nextSnapshotJson = JSON.stringify(nextActiveSnapshot);
+  const previousArchiveJson = JSON.stringify(settings.inactiveMappingArchive || {});
+  const nextArchiveJson = JSON.stringify(mergedArchive);
+  if (previousSnapshotJson !== nextSnapshotJson || previousArchiveJson !== nextArchiveJson) {
+    await settingsStore.updateSettings({
+      inactiveMappingArchive: mergedArchive,
+      lastActiveCsvProductMappings: nextActiveSnapshot,
+    });
+  }
+
+  res.json({
+    csvMappings,
+    learnedMappings,
+    manualMappings,
+    mergedMappings,
+    catalogDevices,
+    removedFromCsv,
+    seenOutsideCatalog,
+    activeProductGroups,
+    inactiveProductGroups,
+    lastLoadedAt: catalog.getLastLoadedAt(),
+  });
+});
+
+app.post('/api/catalog-mappings/inactive/nuke', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  await settingsStore.updateSettings({ inactiveMappingArchive: {} });
+  return res.json({ success: true });
+});
+
+app.post('/api/catalog-refresh', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const loaded = await catalog.loadCatalog();
+  if (!loaded.success) return res.status(400).json(loaded);
+  await persistCatalogHistory();
+  return res.json({ success: true, ...loaded });
+});
+
+app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized, catalog }));
 app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
 
 // ─── THE WEBHOOK (UNCHANGED) ──────────────────────────────────────────────
@@ -416,9 +651,14 @@ RULES:
     const category = aiResponse.category === 'used' ? 'used' : 'new';
     const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
     const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+    const { effectiveMap } = await buildEffectiveMappings();
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
+    const resolvedByAi = foundDevice ? (effectiveMap.get(foundDevice) || foundDevice) : null;
+    const normalizedUserMessage = catalog.normalizeDeviceName(userMessage);
+    const resolvedByRawMessage = normalizedUserMessage ? (effectiveMap.get(normalizedUserMessage) || null) : null;
+    const mappedDevice = resolvedByAi || resolvedByRawMessage || foundDevice;
 
     let finalResponse = null;
 
@@ -427,7 +667,7 @@ RULES:
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       requestStatus = REQUEST_STATUSES.BLOCKED_FORBIDDEN;
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
-    } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
+    } else if (mappedDevice && activeSupportedList.includes(mappedDevice)) {
       finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
       responseIndex++;
       requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
@@ -482,6 +722,7 @@ app.get('*', (req, res) => {
       }
     }
     const settings = await settingsStore.getSettings();
+    catalog.setHistoricalDevices(settings.historicalCatalogDevices || []);
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     const loaded = await catalog.loadCatalog();
