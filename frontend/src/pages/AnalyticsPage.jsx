@@ -9,6 +9,7 @@ const timeframeOptions = [
 
 export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('1m');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [data, setData] = useState({ devices: [], customers: [] });
   const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
   const [status, setStatus] = useState('');
@@ -37,17 +38,31 @@ export default function AnalyticsPage() {
       setData({ devices, customers });
       setRequestSummary(summary);
     })();
-  }, [timeframe]);
+  }, [timeframe, dateRange.start, dateRange.end]);
 
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
-        <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-          {timeframeOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={dateRange.start}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <input
+            type="date"
+            value={dateRange.end}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
+            {timeframeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
@@ -175,14 +190,22 @@ function HourlyBarChart({ title, data }) {
 }
 
 function Leaderboard({ title, rows }) {
+  const countStyles = [
+    'bg-indigo-500/20 text-indigo-200',
+    'bg-sky-500/20 text-sky-200',
+    'bg-emerald-500/20 text-emerald-200',
+    'bg-violet-500/20 text-violet-200',
+    'bg-slate-500/30 text-slate-200',
+  ];
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="mb-3 text-lg font-semibold">{title}</h3>
       <div className="space-y-2">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <div key={row.key} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-slate-800">
             <span>{row.key}</span>
-            <span className="font-semibold">{row.count}</span>
+            <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${countStyles[index % countStyles.length]}`}>{row.count}</span>
           </div>
         ))}
         {!rows.length && <p className="text-sm text-slate-500">No data yet.</p>}
