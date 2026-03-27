@@ -111,6 +111,34 @@ function sanitizeStringArray(value) {
   return value.map((v) => String(v || '').trim()).filter(Boolean);
 }
 
+async function buildEffectiveMappings() {
+  const csvMappings = Object.entries(catalog.getArrangementMap())
+    .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+
+  const dictionaryRows = await processor.listDictionary();
+  const csvAliasSet = new Set(csvMappings.map((row) => row.alias));
+  const learnedMappings = dictionaryRows
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row.slang);
+      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
+      const source = row.autoLearned ? 'auto' : 'manual';
+      return { alias, normalizedName, source };
+    })
+    .filter((row) => row.alias && row.normalizedName)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+
+  const manualMappings = learnedMappings.filter((row) => !csvAliasSet.has(row.alias));
+
+  const effectiveMap = new Map();
+  csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+  learnedMappings.forEach((row) => {
+    if (!effectiveMap.has(row.alias)) effectiveMap.set(row.alias, row.normalizedName);
+  });
+
+  return { csvMappings, learnedMappings, manualMappings, effectiveMap };
+}
+
 function resolveExpectedApiKey() {
   return String(process.env.API_KEY || runtimeApiKey || API_KEY).trim();
 }
@@ -450,34 +478,20 @@ app.get('/api/clean-analytics', async (req, res) => {
 app.get('/api/catalog-mappings', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
 
-  const csvMappings = Object.entries(catalog.getArrangementMap())
-    .map(([alias, normalizedName]) => ({ alias, normalizedName }))
-    .sort((a, b) => a.alias.localeCompare(b.alias));
+  const { csvMappings, learnedMappings, manualMappings } = await buildEffectiveMappings();
   const catalogDevices = catalog.getAllCatalogDevices();
-
-  const dictionaryRows = await processor.listDictionary();
-  const csvAliasSet = new Set(csvMappings.map((row) => row.alias));
-  const manualMappings = dictionaryRows
-    .map((row) => ({
-      alias: catalog.normalizeDeviceName(row.slang),
-      normalizedName: catalog.normalizeDeviceName(row.normalizedName),
-      source: 'manual',
-    }))
-    .filter((row) => row.alias && row.normalizedName && !csvAliasSet.has(row.alias))
-    .sort((a, b) => a.alias.localeCompare(b.alias));
-
-  const mergedMappings = [...csvMappings.map((row) => ({ ...row, source: 'csv' })), ...manualMappings];
+  const mergedMappings = [...csvMappings, ...manualMappings];
   const historicalCatalogDevices = catalog.getHistoricalDevices();
   const historicalSet = new Set(historicalCatalogDevices);
   catalogDevices.forEach((name) => historicalSet.delete(name));
   const removedFromCsv = Array.from(historicalSet).sort();
   const seenMap = new Map();
 
-  dictionaryRows.forEach((row) => {
+  learnedMappings.forEach((row) => {
     const normalizedName = String(row.normalizedName || '').trim();
-    if (!normalizedName || catalogDevices.includes(normalizedName.toLowerCase())) return;
+    if (!normalizedName || catalogDevices.includes(normalizedName)) return;
     if (!seenMap.has(normalizedName)) {
-      seenMap.set(normalizedName, { normalizedName, source: 'dictionary', aliases: new Set([String(row.slang || '').trim()]) });
+      seenMap.set(normalizedName, { normalizedName, source: 'dictionary', aliases: new Set([String(row.alias || '').trim()]) });
     }
   });
 
@@ -505,6 +519,7 @@ app.get('/api/catalog-mappings', async (req, res) => {
 
   res.json({
     csvMappings,
+    learnedMappings,
     manualMappings,
     mergedMappings,
     catalogDevices,
@@ -579,9 +594,14 @@ RULES:
     const category = aiResponse.category === 'used' ? 'used' : 'new';
     const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
     const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+    const { effectiveMap } = await buildEffectiveMappings();
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
+    const resolvedByAi = foundDevice ? (effectiveMap.get(foundDevice) || foundDevice) : null;
+    const normalizedUserMessage = catalog.normalizeDeviceName(userMessage);
+    const resolvedByRawMessage = normalizedUserMessage ? (effectiveMap.get(normalizedUserMessage) || null) : null;
+    const mappedDevice = resolvedByAi || resolvedByRawMessage || foundDevice;
 
     let finalResponse = null;
 
@@ -590,11 +610,11 @@ RULES:
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       requestStatus = REQUEST_STATUSES.BLOCKED_FORBIDDEN;
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
-    } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
+    } else if (mappedDevice && activeSupportedList.includes(mappedDevice)) {
       finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
       responseIndex++;
       requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
-      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
+      console.log(`✅ Match found: ${mappedDevice}. Sending reply: ${finalResponse}`);
     } else {
       console.log(`🤷 No match or forbidden phrase found.`);
     }
@@ -607,7 +627,7 @@ RULES:
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            matchedDevice: mappedDevice || foundDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),
