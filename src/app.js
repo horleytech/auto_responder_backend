@@ -48,6 +48,12 @@ const processor = createProcessor({ firestore, catalog, providerService, setting
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
 const DASHBOARD_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const REQUEST_STATUSES = {
+  BLOCKED_FORBIDDEN: 'blocked_forbidden',
+  REPLIED: 'replied',
+  MATCHED_NO_REPLY: 'matched_no_reply',
+  NO_MATCH: 'no_match',
+};
 
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
@@ -247,11 +253,61 @@ app.delete('/api/dictionary/:id', async (req, res) => {
 
 app.get('/api/requests', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  if (!firestore) return res.json({ requests: [] });
+  if (!firestore) return res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {} } });
+  const includeNoMatch = String(req.query.includeNoMatch || '').toLowerCase() === 'true';
+
+  const summarizeRequests = (requests) => {
+    const byStatus = requests.reduce((acc, row) => {
+      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    const byHour = requests.reduce((acc, row) => {
+      const rawTime = row.timestamp || row.processedAt || row.createdAt;
+      const millis = typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
+      if (!Number.isFinite(millis)) return acc;
+      const hourBucket = new Date(millis).toISOString().slice(0, 13) + ':00';
+      acc[hourBucket] = (acc[hourBucket] || 0) + 1;
+      return acc;
+    }, {});
+
+    return { total: requests.length, byStatus, byHour };
+  };
+
   try {
-    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(50).get();
-    res.json({ requests: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
-  } catch(e) { res.json({ requests: [] }); }
+    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
+    const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const requests = includeNoMatch
+      ? rows
+      : rows.filter((row) => row.status && row.status !== REQUEST_STATUSES.NO_MATCH);
+    res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
+  } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {} } }); }
+});
+
+app.post('/api/requests/clear', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  if (!firestore) return res.json({ success: true, deleted: 0, mode: 'memory' });
+
+  try {
+    let deleted = 0;
+    while (true) {
+      const snap = await firestore.collection('ar_raw_requests').limit(300).get();
+      if (snap.empty) break;
+
+      const batch = firestore.batch();
+      snap.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+        deleted += 1;
+      });
+      await batch.commit();
+      if (snap.size < 300) break;
+    }
+
+    return res.json({ success: true, deleted, mode: 'firebase' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to clear request logs' });
+  }
 });
 
 app.get('/api/clean-analytics', async (req, res) => {
@@ -336,11 +392,15 @@ RULES:
 
     let finalResponse = null;
 
+    let requestStatus = REQUEST_STATUSES.NO_MATCH;
+
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
+      requestStatus = REQUEST_STATUSES.BLOCKED_FORBIDDEN;
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
     } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
       finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
       responseIndex++;
+      requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
       console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
     } else {
       console.log(`🤷 No match or forbidden phrase found.`);
@@ -353,6 +413,9 @@ RULES:
           senderMessage: userMessage,
           aiCategory: category,
           aiDeviceMatch: foundDevice,
+          matchedDevice: foundDevice,
+          status: requestStatus,
+          forbiddenPhrase: foundForbidden,
           replied: !!finalResponse,
           timestamp: Date.now(),
           processed: false,
