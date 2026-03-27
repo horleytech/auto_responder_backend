@@ -8,8 +8,6 @@ module.exports = {
   QWEN_BASE_URL: process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   CHATGPT_MODEL: process.env.CHATGPT_MODEL || 'gpt-4o-mini',
   QWEN_MODEL: process.env.QWEN_MODEL || 'qwen-plus',
-  MAX_REQUEST_LOG: Number(process.env.MAX_REQUEST_LOG || 300),
-  CUSTOM_RESPONSE: process.env.CUSTOM_RESPONSE || 'Available',
   DEFAULT_AI_PROVIDER: (process.env.DEFAULT_AI_PROVIDER || 'chatgpt').toLowerCase(),
   GOOGLE_SHEETS_CSV_URL:
     process.env.GOOGLE_SHEETS_CSV_URL ||
