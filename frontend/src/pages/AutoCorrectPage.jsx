@@ -14,6 +14,8 @@ export default function AutoCorrectPage() {
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
   const [status, setStatus] = useState('');
+  const [deviceMenu, setDeviceMenu] = useState([]);
+  const [aliasDrafts, setAliasDrafts] = useState({});
 
   const normalizedOptions = Array.from(new Set([
     ...catalogDevices,
@@ -31,6 +33,12 @@ export default function AutoCorrectPage() {
     const nextRows = data.dictionary || [];
     setRows(nextRows);
     setStatus(nextRows.length ? `Loaded ${nextRows.length} mapping(s).` : 'No mappings saved yet.');
+  }
+
+  async function loadDictionaryMenu() {
+    const { response, data } = await fetchJsonSafe('/api/dictionary/menu');
+    if (!response.ok) return;
+    setDeviceMenu(data.menu || []);
   }
 
   async function loadCatalogMappings() {
@@ -77,17 +85,37 @@ export default function AutoCorrectPage() {
     setStatus(editingId ? 'Mapping updated.' : 'Mapping added.');
     resetForm();
     await load();
+    await loadDictionaryMenu();
   }
 
   async function remove(id) {
     await fetchJsonSafe(`/api/dictionary/${id}`, { method: 'DELETE' });
     if (editingId === id) resetForm();
     await load();
+    await loadDictionaryMenu();
+  }
+
+  async function addAliasForDevice(deviceName) {
+    const alias = String(aliasDrafts[deviceName] || '').trim();
+    if (!alias) return;
+    const { response, data } = await fetchJsonSafe('/api/dictionary', {
+      method: 'POST',
+      body: JSON.stringify({ slang: alias, normalizedName: deviceName }),
+    });
+    if (!response.ok) {
+      setStatus(data.error || `Failed to add alias (${response.status})`);
+      return;
+    }
+    setAliasDrafts((prev) => ({ ...prev, [deviceName]: '' }));
+    setStatus(`Added alias "${alias}" → ${deviceName}`);
+    await load();
+    await loadDictionaryMenu();
   }
 
   useEffect(() => {
     load();
     loadCatalogMappings();
+    loadDictionaryMenu();
 
     const timer = setInterval(() => {
       loadCatalogMappings();
@@ -205,6 +233,52 @@ export default function AutoCorrectPage() {
                   <div className="font-medium">{row.normalizedName}</div>
                   <div className="text-xs text-slate-500">source: {row.source}</div>
                   {!!row.aliases?.length && <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">examples: {row.aliases.join(' | ')}</div>}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!!deviceMenu.length && (
+          <details className="mb-4 rounded-lg bg-cyan-50 p-3 dark:bg-cyan-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Dictionary Menu by Product ({deviceMenu.length})</summary>
+            <div className="mt-2 max-h-[32rem] space-y-3 overflow-auto">
+              {deviceMenu.map((item) => (
+                <div key={item.deviceName} className="rounded border border-cyan-200 bg-white p-2 dark:border-cyan-700/30 dark:bg-slate-900">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNormalizedName(item.deviceName)}
+                      className="text-left text-sm font-semibold text-cyan-800 underline-offset-2 hover:underline dark:text-cyan-300"
+                    >
+                      {item.deviceName}
+                    </button>
+                    <span className="text-xs text-slate-500">aliases: {item.aliases.length}</span>
+                  </div>
+                  <div className="mb-2 flex flex-wrap gap-2 text-xs">
+                    {item.aliases.map((alias, idx) => (
+                      <button
+                        key={`${item.deviceName}-${alias.alias}-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          setSlang(alias.alias);
+                          setNormalizedName(item.deviceName);
+                        }}
+                        className="rounded border border-slate-300 bg-slate-100 px-2 py-1 dark:border-slate-600 dark:bg-slate-800"
+                      >
+                        [{alias.source}] {alias.alias}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      value={aliasDrafts[item.deviceName] || ''}
+                      onChange={(e) => setAliasDrafts((prev) => ({ ...prev, [item.deviceName]: e.target.value }))}
+                      placeholder={`Add alias for ${item.deviceName}`}
+                      className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    />
+                    <button type="button" onClick={() => addAliasForDevice(item.deviceName)} className="rounded bg-cyan-600 px-2 py-1 text-xs text-white">Add Alias</button>
+                  </div>
                 </div>
               ))}
             </div>

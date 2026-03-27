@@ -232,6 +232,7 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
 
   return {
     getSettings,
+    getDictionaryMap,
     saveRawRequest,
     sync,
     listDictionary,

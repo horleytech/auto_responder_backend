@@ -292,6 +292,44 @@ app.get('/api/dictionary', async (req, res) => {
   res.json({ dictionary: rows });
 });
 
+app.get('/api/dictionary/menu', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const rows = await processor.listDictionary();
+  const groups = new Map();
+
+  Object.entries(catalog.getArrangementMap()).forEach(([alias, normalizedName]) => {
+    const key = String(normalizedName || '').trim();
+    if (!key) return;
+    const row = groups.get(key) || { deviceName: key, aliases: [] };
+    row.aliases.push({ alias, source: 'csv' });
+    groups.set(key, row);
+  });
+
+  rows.forEach((entry) => {
+    const key = catalog.normalizeDeviceName(entry.normalizedName);
+    if (!key) return;
+    const row = groups.get(key) || { deviceName: key, aliases: [] };
+    row.aliases.push({
+      id: entry.id,
+      alias: catalog.normalizeDeviceName(entry.slang) || entry.slang,
+      source: entry.autoLearned ? 'auto' : 'manual',
+      updatedAt: entry.updatedAt || null,
+    });
+    groups.set(key, row);
+  });
+
+  const menu = Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      aliases: group.aliases
+        .filter((item) => item.alias)
+        .sort((a, b) => String(a.alias).localeCompare(String(b.alias))),
+    }))
+    .sort((a, b) => a.deviceName.localeCompare(b.deviceName));
+
+  res.json({ menu, totalDevices: menu.length, totalAliases: menu.reduce((sum, item) => sum + item.aliases.length, 0) });
+});
+
 app.post('/api/dictionary', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   try {
@@ -552,6 +590,23 @@ app.post('/api/respond', async (req, res) => {
     let activeDynamicResponses = sanitizeStringArray(settings.dynamicResponses);
     if (!activeDynamicResponses.length) activeDynamicResponses = ["Available", "Available chief", "Available boss"];
 
+    const dictionary = await processor.getDictionaryMap();
+    const normalizedMessage = catalog.normalizeDeviceName(userMessage);
+    let dictionaryDevice = null;
+
+    if (normalizedMessage && dictionary.has(normalizedMessage)) {
+      dictionaryDevice = catalog.normalizeDeviceName(dictionary.get(normalizedMessage));
+    } else if (normalizedMessage) {
+      let bestAlias = '';
+      dictionary.forEach((normalizedName, alias) => {
+        if (!alias || alias.length < 3) return;
+        if (normalizedMessage.includes(alias) && alias.length > bestAlias.length) {
+          bestAlias = alias;
+          dictionaryDevice = catalog.normalizeDeviceName(normalizedName);
+        }
+      });
+    }
+
     const prompt = `You are a JSON-based entity extractor. Return JSON ONLY.
 Category: If message contains 'used', category is 'used'. Else 'new'.
 List of NEW devices: ${activeNewDevices.join(', ')}
@@ -568,17 +623,22 @@ RULES:
     const activeProvider = String(settings.activeProvider || providerService.getActiveProvider() || 'chatgpt').toLowerCase();
     console.log(`🤖 Routing request to ${activeProvider.toUpperCase()} API...`);
 
-    const rawAiString = await providerService.runProvider(
-      activeProvider, prompt, userMessage,
-      { openAiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY, qwenKey: QWEN_API_KEY || process.env.QWEN_API_KEY }
-    );
+    let category = /\bused\b/i.test(userMessage) ? 'used' : 'new';
+    let foundDevice = dictionaryDevice;
+    let foundForbidden = null;
 
-    const cleanedString = String(rawAiString).replace(/```json/gi, '').replace(/```/g, '').trim();
-    const aiResponse = JSON.parse(cleanedString || '{}');
+    if (!foundDevice) {
+      const rawAiString = await providerService.runProvider(
+        activeProvider, prompt, userMessage,
+        { openAiKey: OPENAI_API_KEY || process.env.OPENAI_API_KEY, qwenKey: QWEN_API_KEY || process.env.QWEN_API_KEY }
+      );
 
-    const category = aiResponse.category === 'used' ? 'used' : 'new';
-    const foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
-    const foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+      const cleanedString = String(rawAiString).replace(/```json/gi, '').replace(/```/g, '').trim();
+      const aiResponse = JSON.parse(cleanedString || '{}');
+      category = aiResponse.category === 'used' ? 'used' : 'new';
+      foundDevice = aiResponse.device ? String(aiResponse.device).toLowerCase() : null;
+      foundForbidden = aiResponse.forbidden ? String(aiResponse.forbidden).toLowerCase() : null;
+    }
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
