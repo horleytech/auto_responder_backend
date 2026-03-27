@@ -65,6 +65,27 @@ function sanitizeLowercaseStringArray(value) {
   return sanitizeStringArray(value).map((v) => v.toLowerCase());
 }
 
+async function persistCatalogHistory(input, maybeCatalogService, maybeLoaded) {
+  const config = (input && typeof input === 'object' && input.firestoreDb !== undefined)
+    ? input
+    : { firestoreDb: input, catalogService: maybeCatalogService, loaded: maybeLoaded };
+  const { firestoreDb, catalogService, loaded } = config;
+  if (!firestoreDb || !loaded?.success) return;
+  try {
+    const payload = {
+      newCount: Number(loaded.newCount || 0),
+      usedCount: Number(loaded.usedCount || 0),
+      arrangementCount: Number(loaded.arrangementCount || 0),
+      sampleNewDevices: (catalogService.getNewDevices() || []).slice(0, 20),
+      sampleUsedDevices: (catalogService.getUsedDevices() || []).slice(0, 20),
+      updatedAt: Date.now(),
+    };
+    await firestoreDb.collection('ar_settings').doc('catalogHistory').set(payload, { merge: true });
+  } catch (err) {
+    console.error('Catalog history persistence skipped:', err.message);
+  }
+}
+
 function resolveExpectedApiKey() {
   return String(process.env.API_KEY || runtimeApiKey || API_KEY).trim();
 }
@@ -706,7 +727,7 @@ app.get('*', (req, res) => {
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
-      await persistCatalogHistory();
+      await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
       console.log(
         `📦 Catalog ready (${loaded.newCount} new, ${loaded.usedCount} used, ${loaded.arrangementCount} mapped aliases).`
       );
