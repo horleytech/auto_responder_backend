@@ -10,23 +10,32 @@ const timeframeOptions = [
 export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('1m');
   const [data, setData] = useState({ devices: [], customers: [] });
+  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
     (async () => {
-      const { response, data: payload } = await fetchJsonSafe(`/api/clean-analytics?timeframe=${timeframe}`);
-      
-      if (!response.ok) {
-        setStatus(`Analytics API unavailable (${response.status}). ${payload?.error || 'Check if server is running and Firebase is configured.'}`);
+      const [analyticsResponse, requestsResponse] = await Promise.all([
+        fetchJsonSafe(`/api/clean-analytics?timeframe=${timeframe}`),
+        fetchJsonSafe('/api/requests'),
+      ]);
+
+      if (!analyticsResponse.response.ok) {
+        setStatus(`Analytics API unavailable (${analyticsResponse.response.status}). ${analyticsResponse.data?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
+        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
         return;
       }
 
-      const devices = Array.isArray(payload?.devices) ? payload.devices : [];
-      const customers = Array.isArray(payload?.customers) ? payload.customers : [];
+      const devices = Array.isArray(analyticsResponse.data?.devices) ? analyticsResponse.data.devices : [];
+      const customers = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
+      const summary = requestsResponse.response.ok
+        ? normalizeSummary(requestsResponse.data?.summary)
+        : { total: 0, byStatus: {}, byHour: {}, byDevice: {} };
 
       setStatus('');
       setData({ devices, customers });
+      setRequestSummary(summary);
     })();
   }, [timeframe]);
 
@@ -43,11 +52,125 @@ export default function AnalyticsPage() {
 
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
+      <div className="grid gap-4 md:grid-cols-3">
+        <SummaryCard label="Matched Requests" value={requestSummary.total} />
+        <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
+        <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
+        <HourlyBarChart title="Matched Requests by Hour" data={requestSummary.byHour} />
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
         <Leaderboard title="Top 5 Customers / Vendors" rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))} />
       </div>
     </section>
+  );
+}
+
+function normalizeSummary(summary) {
+  return {
+    total: Number(summary?.total || 0),
+    byStatus: typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {},
+    byHour: typeof summary?.byHour === 'object' && summary?.byHour ? summary.byHour : {},
+    byDevice: typeof summary?.byDevice === 'object' && summary?.byDevice ? summary.byDevice : {},
+  };
+}
+
+function SummaryCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-2 text-3xl font-bold">{Number(value || 0)}</p>
+    </div>
+  );
+}
+
+function PieChartCard({ title, data }) {
+  const entries = Object.entries(data || {}).filter(([, value]) => Number(value) > 0);
+  const total = entries.reduce((sum, [, value]) => sum + Number(value), 0);
+  const colors = ['#4f46e5', '#f97316', '#0ea5e9', '#10b981', '#a855f7'];
+  let offset = 0;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <h3 className="mb-4 text-lg font-semibold">{title}</h3>
+      {!total && <p className="text-sm text-slate-500">No matched-device data yet.</p>}
+      {!!total && (
+        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+          <svg width="180" height="180" viewBox="0 0 120 120" className="shrink-0">
+            {entries.map(([key, value], index) => {
+              const percentage = Number(value) / total;
+              const length = percentage * 314.159;
+              const dashArray = `${length} ${314.159 - length}`;
+              const segment = (
+                <circle
+                  key={key}
+                  cx="60"
+                  cy="60"
+                  r="50"
+                  fill="none"
+                  stroke={colors[index % colors.length]}
+                  strokeWidth="20"
+                  strokeDasharray={dashArray}
+                  strokeDashoffset={-offset}
+                  transform="rotate(-90 60 60)"
+                />
+              );
+              offset += length;
+              return segment;
+            })}
+          </svg>
+          <div className="w-full space-y-2">
+            {entries.map(([key, value], index) => (
+              <div key={key} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+                  <span>{key.replace(/_/g, ' ')}</span>
+                </div>
+                <span className="font-semibold">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HourlyBarChart({ title, data }) {
+  const rows = Object.entries(data || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12);
+  const max = rows.reduce((m, [, count]) => Math.max(m, Number(count) || 0), 0);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <h3 className="mb-4 text-lg font-semibold">{title}</h3>
+      {!rows.length && <p className="text-sm text-slate-500">No hourly data yet.</p>}
+      {!!rows.length && (
+        <div className="space-y-3">
+          {rows.map(([hour, count]) => {
+            const value = Number(count) || 0;
+            const width = max > 0 ? `${Math.max((value / max) * 100, 4)}%` : '0%';
+            return (
+              <div key={hour}>
+                <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>{hour.replace('T', ' ')}</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">{value}</span>
+                </div>
+                <div className="h-2 rounded bg-slate-200 dark:bg-slate-800">
+                  <div className="h-2 rounded bg-indigo-500" style={{ width }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

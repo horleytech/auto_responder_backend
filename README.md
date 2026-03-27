@@ -5,7 +5,7 @@ This build keeps your core CSV-driven logic and adds a clean folder structure, Q
 ## Folder Structure
 
 - `src/config/` → environment config
-- `src/services/` → Firebase, providers, catalog, request store, settings store
+- `src/services/` → Firebase, providers, catalog, processor, settings store
 - `src/app.js` → API wiring
 - `index.js` → runtime entrypoint (`app.listen`) + export for Vercel
 - `public/css/` and `public/js/` → organized frontend assets
@@ -41,8 +41,6 @@ DEFAULT_AI_PROVIDER=chatgpt
 CHATGPT_MODEL=gpt-4o-mini
 QWEN_MODEL=qwen-plus
 QWEN_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-MAX_REQUEST_LOG=300
-CUSTOM_RESPONSE=Available
 GOOGLE_SHEETS_CSV_URL=https://docs.google.com/.../export?format=csv
 KEEP_PROCESSED_RAW=false
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -64,12 +62,12 @@ By default, synced raw requests are deleted after successful midnight sync to ke
 
 - `POST /api/respond` (requires `x-api-key`)
 - `GET /api/providers`
-- `POST /api/providers` (requires `x-api-key`)
+- `POST /api/providers`
 - `GET /api/catalog-source`
-- `POST /api/catalog-source` (requires `x-api-key`)
-- `POST /api/reload-catalog` (requires `x-api-key`)
+- `POST /api/catalog-source`
 - `GET /api/requests`
-- `GET /api/grouped-requests`
+- `POST /api/requests/clear`
+- `GET /api/clean-analytics`
 - `GET /healthz`
 
 ## Dashboard
@@ -77,8 +75,8 @@ By default, synced raw requests are deleted after successful midnight sync to ke
 - Switch provider between ChatGPT and Qwen
 - Enter and update CSV URL from UI
 - Reload catalog from UI
-- View all incoming requests
-- View grouped/frequency requests
+- View matched-request logs only (avoids blocked/unknown noise)
+- View analytics with matched-device pie chart and hourly frequency chart
 - Same-tab Home button to `https://scrapebot.horleytech.com/hub`
 
 
