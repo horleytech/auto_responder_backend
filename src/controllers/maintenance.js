@@ -14,6 +14,9 @@ function createMaintenanceRouter({ firestore, processor, settingsStore, isDashbo
       if (!catalogLoad.success) {
         return res.status(400).json({ error: `Catalog refresh failed before sync: ${catalogLoad.error}` });
       }
+      if (catalog?.getHistoricalDevices) {
+        await settingsStore.write({ historicalCatalogDevices: catalog.getHistoricalDevices() });
+      }
       const settings = await settingsStore.read();
       const provider = settings.activeProvider || 'chatgpt';
       const result = await processor.sync({

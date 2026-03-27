@@ -7,6 +7,7 @@ export default function AutoCorrectPage() {
   const [manualMappings, setManualMappings] = useState([]);
   const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
+  const [removedFromCsv, setRemovedFromCsv] = useState([]);
   const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
   const [slang, setSlang] = useState('');
@@ -29,6 +30,7 @@ export default function AutoCorrectPage() {
     setManualMappings(data.manualMappings || []);
     setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
+    setRemovedFromCsv(data.removedFromCsv || []);
     setSeenOutsideCatalog(data.seenOutsideCatalog || []);
     setLastLoadedAt(Number(data.lastLoadedAt || 0));
   }
@@ -111,6 +113,18 @@ export default function AutoCorrectPage() {
           Total active mappings: {mergedMappings.length} (CSV: {csvMappings.length}, Manual add-ons: {manualMappings.length}) • catalog products: {catalogDevices.length}
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
+
+        {!!removedFromCsv.length && (
+          <details className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-700/40 dark:bg-orange-950/20" open>
+            <summary className="cursor-pointer text-sm font-medium">Previously in CSV, currently removed ({removedFromCsv.length})</summary>
+            <p className="mt-1 text-xs text-orange-700 dark:text-orange-300">
+              If any of these products return to the CSV, they will automatically move back into active CSV mappings.
+            </p>
+            <div className="mt-2 max-h-56 space-y-1 overflow-auto text-sm">
+              {removedFromCsv.map((name) => <div key={name}>{name}</div>)}
+            </div>
+          </details>
+        )}
 
         {!!manualMappings.length && (
           <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300">

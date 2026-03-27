@@ -93,6 +93,11 @@ function requestTimestamp(row) {
   return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
 }
 
+async function persistCatalogHistory() {
+  const historicalCatalogDevices = catalog.getHistoricalDevices();
+  await settingsStore.updateSettings({ historicalCatalogDevices });
+}
+
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);
@@ -240,7 +245,11 @@ app.post('/api/catalog-source', async (req, res) => {
   catalog.setArrangementCsvUrl(String(req.body?.arrangementCsvUrl || '').trim());
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await settingsStore.updateSettings({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+  await settingsStore.updateSettings({
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
+  });
+  await persistCatalogHistory();
   return res.json({ success: true, ...loaded });
 });
 
@@ -450,6 +459,10 @@ app.get('/api/catalog-mappings', async (req, res) => {
     .sort((a, b) => a.alias.localeCompare(b.alias));
 
   const mergedMappings = [...csvMappings.map((row) => ({ ...row, source: 'csv' })), ...manualMappings];
+  const historicalCatalogDevices = catalog.getHistoricalDevices();
+  const historicalSet = new Set(historicalCatalogDevices);
+  catalogDevices.forEach((name) => historicalSet.delete(name));
+  const removedFromCsv = Array.from(historicalSet).sort();
   const seenMap = new Map();
 
   dictionaryRows.forEach((row) => {
@@ -487,6 +500,7 @@ app.get('/api/catalog-mappings', async (req, res) => {
     manualMappings,
     mergedMappings,
     catalogDevices,
+    removedFromCsv,
     seenOutsideCatalog,
     lastLoadedAt: catalog.getLastLoadedAt(),
   });
@@ -496,6 +510,7 @@ app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
+  await persistCatalogHistory();
   return res.json({ success: true, ...loaded });
 });
 
@@ -622,10 +637,12 @@ app.get('*', (req, res) => {
       }
     }
     const settings = await settingsStore.getSettings();
+    catalog.setHistoricalDevices(settings.historicalCatalogDevices || []);
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
+      await persistCatalogHistory();
       console.log(
         `📦 Catalog ready (${loaded.newCount} new, ${loaded.usedCount} used, ${loaded.arrangementCount} mapped aliases).`
       );
