@@ -164,12 +164,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
   }
 
-  function mapArrangement(input) {
-    const normalized = normalizeDeviceName(input);
-    if (!normalized) return null;
-    return arrangementMap[normalized] || normalized;
-  }
-
   return {
     getInventoryCsvUrl: () => inventoryCsvUrl,
     getArrangementCsvUrl: () => arrangementCsvUrl,
@@ -182,7 +176,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
     getArrangementMap: () => arrangementMap,
-    mapArrangement,
     normalizeDeviceName,
     loadCatalog,
   };

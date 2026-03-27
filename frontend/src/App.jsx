@@ -6,7 +6,7 @@ import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe, saveDashboardToken } from './lib/api';
+import { fetchJsonSafe } from './lib/api';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
