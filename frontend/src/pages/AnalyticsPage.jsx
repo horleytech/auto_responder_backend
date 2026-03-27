@@ -33,9 +33,11 @@ export default function AnalyticsPage() {
 
       const devices = Array.isArray(analyticsResponse.data?.devices) ? analyticsResponse.data.devices : [];
       const customersFromAnalytics = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
-      const summary = requestsResponse.response.ok
+      const summaryFromRequests = requestsResponse.response.ok
         ? normalizeSummary(requestsResponse.data?.summary)
         : { total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
+      const summaryFromAnalytics = normalizeSummary(analyticsResponse.data?.summary);
+      const summary = summaryFromRequests.total > 0 ? summaryFromRequests : summaryFromAnalytics;
       const customers = customersFromAnalytics.length
         ? customersFromAnalytics
         : Object.entries(summary.bySender || {})
@@ -200,14 +202,22 @@ function HourlyBarChart({ title, data }) {
 }
 
 function Leaderboard({ title, rows }) {
+  const countStyles = [
+    'bg-indigo-500/20 text-indigo-200',
+    'bg-sky-500/20 text-sky-200',
+    'bg-emerald-500/20 text-emerald-200',
+    'bg-violet-500/20 text-violet-200',
+    'bg-slate-500/30 text-slate-200',
+  ];
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="mb-3 text-lg font-semibold">{title}</h3>
       <div className="space-y-2">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <div key={row.key} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-slate-800">
             <span>{row.key}</span>
-            <span className="font-semibold">{row.count}</span>
+            <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${countStyles[index % countStyles.length]}`}>{row.count}</span>
           </div>
         ))}
         {!rows.length && <p className="text-sm text-slate-500">No data yet.</p>}
