@@ -4,7 +4,9 @@ import { fetchJsonSafe } from '../lib/api';
 export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState }) {
   const [status, setStatus] = useState('');
   const [showNukeModal, setShowNukeModal] = useState(false);
+  const [showClearLogsModal, setShowClearLogsModal] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  const [clearConfirmText, setClearConfirmText] = useState('');
 
   async function saveProvider() {
     const { response, data } = await fetchJsonSafe('/api/providers', {
@@ -40,6 +42,23 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
     setConfirmText('');
   }
 
+  async function clearRequestLogs() {
+    if (clearConfirmText !== 'CLEAR') {
+      setStatus('Type CLEAR exactly to confirm request-log deletion.');
+      return;
+    }
+
+    const { response, data } = await fetchJsonSafe('/api/requests/clear', { method: 'POST' });
+    if (response.ok) {
+      setStatus(`Request logs cleared. Deleted ${data.deleted || 0} records (${data.mode || 'unknown'}).`);
+    } else {
+      setStatus(`Request log clear failed (${response.status}): ${data.error || 'Unknown error'}`);
+    }
+
+    setShowClearLogsModal(false);
+    setClearConfirmText('');
+  }
+
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
@@ -71,9 +90,29 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
         <div className="flex flex-wrap gap-3">
           <button type="button" onClick={() => runMaintenance('/api/maintenance/sync')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Force Build</button>
           <button type="button" onClick={() => runMaintenance('/api/maintenance/backup')} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white">Log Backup</button>
+          <button type="button" onClick={() => setShowClearLogsModal(true)} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white">Clear Request Log</button>
           <button type="button" onClick={() => setShowNukeModal(true)} className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white">Nuke System</button>
         </div>
       </div>
+
+      {showClearLogsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 dark:bg-slate-900">
+            <h3 className="text-lg font-semibold">Clear Request Log</h3>
+            <p className="mt-2 text-sm text-slate-500">Type <strong>CLEAR</strong> below to delete all request-log records from Firebase.</p>
+            <input
+              className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+              value={clearConfirmText}
+              onChange={(e) => setClearConfirmText(e.target.value)}
+              placeholder="Type CLEAR"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setShowClearLogsModal(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Cancel</button>
+              <button type="button" onClick={clearRequestLogs} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white">Clear Logs</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNukeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
