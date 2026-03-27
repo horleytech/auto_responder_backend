@@ -75,8 +75,8 @@ By default, synced raw requests are deleted after successful midnight sync to ke
 - Switch provider between ChatGPT and Qwen
 - Enter and update CSV URL from UI
 - Reload catalog from UI
-- View filtered incoming requests (prioritizes useful statuses)
-- View analytics, request-status pie chart, and hourly frequency chart
+- View matched-request logs only (avoids blocked/unknown noise)
+- View analytics with matched-device pie chart and hourly frequency chart
 - Same-tab Home button to `https://scrapebot.horleytech.com/hub`
 
 

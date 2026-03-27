@@ -10,7 +10,7 @@ const timeframeOptions = [
 export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('1m');
   const [data, setData] = useState({ devices: [], customers: [] });
-  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {} });
+  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export default function AnalyticsPage() {
       if (!analyticsResponse.response.ok) {
         setStatus(`Analytics API unavailable (${analyticsResponse.response.status}). ${analyticsResponse.data?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
-        setRequestSummary({ total: 0, byStatus: {}, byHour: {} });
+        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {} });
         return;
       }
 
@@ -31,7 +31,7 @@ export default function AnalyticsPage() {
       const customers = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
       const summary = requestsResponse.response.ok
         ? normalizeSummary(requestsResponse.data?.summary)
-        : { total: 0, byStatus: {}, byHour: {} };
+        : { total: 0, byStatus: {}, byHour: {}, byDevice: {} };
 
       setStatus('');
       setData({ devices, customers });
@@ -53,14 +53,14 @@ export default function AnalyticsPage() {
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Useful Requests" value={requestSummary.total} />
-        <SummaryCard label="Replied" value={requestSummary.byStatus.replied || 0} />
-        <SummaryCard label="Blocked" value={requestSummary.byStatus.blocked_forbidden || 0} />
+        <SummaryCard label="Matched Requests" value={requestSummary.total} />
+        <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
+        <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <PieChartCard title="Request Outcome Distribution" data={requestSummary.byStatus} />
-        <HourlyBarChart title="Useful Requests by Hour" data={requestSummary.byHour} />
+        <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
+        <HourlyBarChart title="Matched Requests by Hour" data={requestSummary.byHour} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -76,6 +76,7 @@ function normalizeSummary(summary) {
     total: Number(summary?.total || 0),
     byStatus: typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {},
     byHour: typeof summary?.byHour === 'object' && summary?.byHour ? summary.byHour : {},
+    byDevice: typeof summary?.byDevice === 'object' && summary?.byDevice ? summary.byDevice : {},
   };
 }
 

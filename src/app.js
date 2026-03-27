@@ -54,6 +54,7 @@ const REQUEST_STATUSES = {
   MATCHED_NO_REPLY: 'matched_no_reply',
   NO_MATCH: 'no_match',
 };
+const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
 
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
@@ -253,12 +254,18 @@ app.delete('/api/dictionary/:id', async (req, res) => {
 
 app.get('/api/requests', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  if (!firestore) return res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {} } });
-  const includeNoMatch = String(req.query.includeNoMatch || '').toLowerCase() === 'true';
+  if (!firestore) return res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } });
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
       const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    const byDevice = requests.reduce((acc, row) => {
+      const key = String(row.matchedDevice || row.aiDeviceMatch || '').trim();
+      if (!key) return acc;
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -272,17 +279,15 @@ app.get('/api/requests', async (req, res) => {
       return acc;
     }, {});
 
-    return { total: requests.length, byStatus, byHour };
+    return { total: requests.length, byStatus, byHour, byDevice };
   };
 
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const requests = includeNoMatch
-      ? rows
-      : rows.filter((row) => row.status && row.status !== REQUEST_STATUSES.NO_MATCH);
+    const requests = rows.filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()));
     res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
-  } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {} } }); }
+  } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
 app.post('/api/requests/clear', async (req, res) => {
@@ -406,22 +411,23 @@ RULES:
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
-    setImmediate(async () => {
-      try {
-        await processor.saveRawRequest({
-          senderId: req.body?.senderId || 'Unknown',
-          senderMessage: userMessage,
-          aiCategory: category,
-          aiDeviceMatch: foundDevice,
-          matchedDevice: foundDevice,
-          status: requestStatus,
-          forbiddenPhrase: foundForbidden,
-          replied: !!finalResponse,
-          timestamp: Date.now(),
-          processed: false,
-        });
-      } catch (err) { console.error('Failed to log request:', err.message); }
-    });
+    if (PERSISTED_REQUEST_STATUSES.has(requestStatus)) {
+      setImmediate(async () => {
+        try {
+          await processor.saveRawRequest({
+            senderId: req.body?.senderId || 'Unknown',
+            senderMessage: userMessage,
+            aiCategory: category,
+            aiDeviceMatch: foundDevice,
+            matchedDevice: foundDevice,
+            status: requestStatus,
+            replied: !!finalResponse,
+            timestamp: Date.now(),
+            processed: false,
+          });
+        } catch (err) { console.error('Failed to log request:', err.message); }
+      });
+    }
 
     if (finalResponse) return res.json({ data: [{ message: finalResponse }] });
     return res.sendStatus(204);
