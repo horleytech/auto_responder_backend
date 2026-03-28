@@ -163,11 +163,7 @@ function sanitizeLowercaseStringArray(value) {
   return sanitizeStringArray(value).map((v) => v.toLowerCase());
 }
 
-async function persistCatalogHistory(input, maybeCatalogService, maybeLoaded) {
-  const config = (input && typeof input === 'object' && input.firestoreDb !== undefined)
-    ? input
-    : { firestoreDb: input, catalogService: maybeCatalogService, loaded: maybeLoaded };
-  const { firestoreDb, catalogService, loaded } = config;
+async function persistCatalogHistory({ firestoreDb, catalogService, loaded }) {
   if (!firestoreDb || !loaded?.success) return;
   try {
     const payload = {

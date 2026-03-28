@@ -108,7 +108,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let legacyHistoricalDevices = [];
   let arrangementMap = {};
   let lastLoadedAt = 0;
-  const historicalDevices = new Set();
 
   async function loadInventory() {
     const csvUrl = normalizeCsvUrl(inventoryCsvUrl);
@@ -183,7 +182,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   async function loadCatalog() {
     try {
       await Promise.all([loadInventory(), loadArrangementMap()]);
-      [...supportedNewDevices, ...supportedUsedDevices].forEach((name) => historicalDevices.add(name));
       lastLoadedAt = Date.now();
       return {
         success: true,
@@ -191,7 +189,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
         usedCount: supportedUsedDevices.length,
         arrangementCount: Object.keys(arrangementMap).length,
         lastLoadedAt,
-        historicalCount: historicalDevices.size,
       };
     } catch (err) {
       return { success: false, error: err.message };
