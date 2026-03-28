@@ -9,11 +9,12 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function RequestsPage() {
+export default function RequestsPage({ senderFocus, onSenderFocusConsumed }) {
   const today = todayDateInputValue();
   const [requests, setRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState({ start: today, end: today });
+  const [expandedSenders, setExpandedSenders] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -27,6 +28,16 @@ export default function RequestsPage() {
       setIsLoading(false);
     })();
   }, [dateRange.start, dateRange.end]);
+
+  useEffect(() => {
+    if (!senderFocus) return;
+    setExpandedSenders((prev) => ({ ...prev, [senderFocus]: true }));
+    setTimeout(() => {
+      const target = document.getElementById(`sender-group-${senderFocus}`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+    onSenderFocusConsumed?.();
+  }, [senderFocus, onSenderFocusConsumed]);
 
   const groupedRequests = useMemo(() => {
     const map = new Map();
@@ -67,10 +78,21 @@ export default function RequestsPage() {
       </div>
 
       <div className="space-y-3">
-        {groupedRequests.map((group) => (
-          <details key={group.sender} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40" open>
-            <summary className="cursor-pointer list-none">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+        {groupedRequests.map((group) => {
+          const isOpen = Boolean(expandedSenders[group.sender]);
+          const isFocused = senderFocus && senderFocus === group.sender;
+
+          return (
+            <div
+              id={`sender-group-${group.sender}`}
+              key={group.sender}
+              className={`rounded-xl border bg-slate-50 p-3 dark:bg-slate-800/40 ${isFocused ? 'border-indigo-500 shadow-[0_0_0_1px_rgba(99,102,241,0.4)]' : 'border-slate-200 dark:border-slate-700'}`}
+            >
+              <button
+                type="button"
+                onClick={() => setExpandedSenders((prev) => ({ ...prev, [group.sender]: !isOpen }))}
+                className="flex w-full flex-wrap items-center justify-between gap-3 text-left"
+              >
                 <div>
                   <p className="text-base font-semibold">{group.sender}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">{group.requests.length} request(s)</p>
@@ -82,30 +104,34 @@ export default function RequestsPage() {
                   {Array.from(group.matchedDevices).slice(0, 3).map((device) => (
                     <span key={device} className="rounded-full bg-indigo-100 px-2 py-1 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">{device}</span>
                   ))}
+                  <span className="rounded-full border border-slate-300 px-2 py-1 dark:border-slate-600">{isOpen ? 'Hide' : 'View'}</span>
                 </div>
-              </div>
-            </summary>
-            <div className="mt-3 overflow-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-2">Time</th><th>Status</th><th>Message</th><th>Matched</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.requests.map((request) => (
-                    <tr key={request.id} className="border-b border-slate-100 align-top dark:border-slate-800">
-                      <td className="py-2 pr-3 whitespace-nowrap">{getRequestTime(request)}</td>
-                      <td className="pr-3 whitespace-nowrap">{getStatus(request)}</td>
-                      <td className="pr-3 break-words">{request.senderMessage || '-'}</td>
-                      <td className="whitespace-nowrap">{getMatchedDevice(request)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              </button>
+
+              {isOpen && (
+                <div className="mt-3 overflow-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-700">
+                        <th className="py-2">Time</th><th>Status</th><th>Message</th><th>Matched</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.requests.map((request) => (
+                        <tr key={request.id} className="border-b border-slate-100 align-top dark:border-slate-800">
+                          <td className="py-2 pr-3 whitespace-nowrap">{getRequestTime(request)}</td>
+                          <td className="pr-3 whitespace-nowrap">{getStatus(request)}</td>
+                          <td className="pr-3 break-words">{request.senderMessage || '-'}</td>
+                          <td className="whitespace-nowrap">{getMatchedDevice(request)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          </details>
-        ))}
+          );
+        })}
 
         {!isLoading && groupedRequests.length === 0 && (
           <p className="py-4 text-sm text-slate-500 dark:text-slate-400">No requests logged yet for this date range.</p>

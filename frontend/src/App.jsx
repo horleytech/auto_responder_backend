@@ -14,6 +14,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
+  const [requestSenderFocus, setRequestSenderFocus] = useState('');
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -55,8 +56,10 @@ export default function App() {
 
   return (
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
-      {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
-      {activePage === 'requests' && <RequestsPage />}
+      {(activePage === 'dashboard' || activePage === 'analytics') && (
+        <AnalyticsPage onCustomerSelect={(senderId) => { setRequestSenderFocus(senderId); setActivePage('requests'); }} />
+      )}
+      {activePage === 'requests' && <RequestsPage senderFocus={requestSenderFocus} onSenderFocusConsumed={() => setRequestSenderFocus('')} />}
       {activePage === 'dictionary' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
       {activePage === 'settings' && (

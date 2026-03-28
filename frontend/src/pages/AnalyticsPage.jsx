@@ -9,7 +9,7 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function AnalyticsPage() {
+export default function AnalyticsPage({ onCustomerSelect }) {
   const today = todayDateInputValue();
   const [dateRange, setDateRange] = useState({ start: today, end: today });
   const [data, setData] = useState({ devices: [], customers: [] });
@@ -92,7 +92,11 @@ export default function AnalyticsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
-        <Leaderboard title="Top 5 Customers / Vendors" rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))} />
+        <Leaderboard
+          title="Top 5 Customers / Vendors"
+          rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))}
+          onRowClick={(row) => onCustomerSelect?.(row.key)}
+        />
       </div>
     </section>
   );
@@ -206,16 +210,21 @@ function HourlyBarChart({ title, data }) {
   );
 }
 
-function Leaderboard({ title, rows }) {
+function Leaderboard({ title, rows, onRowClick }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="mb-3 text-lg font-semibold">{title}</h3>
       <div className="space-y-2">
         {rows.map((row) => (
-          <div key={row.key} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-slate-800">
+          <button
+            key={row.key}
+            type="button"
+            onClick={() => onRowClick?.(row)}
+            className="flex w-full items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-left text-sm transition hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
+          >
             <span>{row.key}</span>
             <span className="font-semibold">{row.count}</span>
-          </div>
+          </button>
         ))}
         {!rows.length && <p className="text-sm text-slate-500">No data yet.</p>}
       </div>
