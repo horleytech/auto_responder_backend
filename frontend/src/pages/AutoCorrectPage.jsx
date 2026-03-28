@@ -10,6 +10,8 @@ export default function AutoCorrectPage() {
   const [removedFromCsv, setRemovedFromCsv] = useState([]);
   const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
+  const [inventoryPreview, setInventoryPreview] = useState({ headers: [], rows: [] });
+  const [arrangementPreview, setArrangementPreview] = useState({ headers: [], rows: [] });
   const [slang, setSlang] = useState('');
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
@@ -41,13 +43,22 @@ export default function AutoCorrectPage() {
     setLastLoadedAt(Number(data.lastLoadedAt || 0));
   }
 
+
+
+  async function loadCatalogPreview() {
+    const { response, data } = await fetchJsonSafe('/api/catalog-preview');
+    if (!response.ok) return;
+    setInventoryPreview(data.inventory || { headers: [], rows: [] });
+    setArrangementPreview(data.arrangement || { headers: [], rows: [] });
+  }
+
   async function refreshCatalog() {
     const { response, data } = await fetchJsonSafe('/api/catalog-refresh', { method: 'POST' });
     if (!response.ok) {
       setStatus(`Catalog refresh failed (${response.status}): ${data.error || 'Unknown error'}`);
       return;
     }
-    await loadCatalogMappings();
+    await Promise.all([loadCatalogMappings(), loadCatalogPreview()]);
     setStatus(`Catalog refreshed. ${data.newCount || 0} new, ${data.usedCount || 0} used, ${data.arrangementCount || 0} mappings.`);
   }
 
@@ -84,9 +95,11 @@ export default function AutoCorrectPage() {
   useEffect(() => {
     load();
     loadCatalogMappings();
+    loadCatalogPreview();
 
     const timer = setInterval(() => {
       loadCatalogMappings();
+      loadCatalogPreview();
     }, 120000);
 
     return () => clearInterval(timer);
@@ -189,6 +202,53 @@ export default function AutoCorrectPage() {
             </div>
           </details>
         )}
+
+
+        <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
+          <summary className="cursor-pointer text-sm font-medium">Inventory CSV Preview ({inventoryPreview.rows.length} rows shown)</summary>
+          <div className="mt-2 overflow-auto rounded border border-slate-200 dark:border-slate-700">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-slate-200/70 dark:bg-slate-700/60">
+                <tr>
+                  {inventoryPreview.headers.map((header) => <th key={header} className="px-2 py-1 font-medium">{header}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {inventoryPreview.rows.map((row, idx) => (
+                  <tr key={`inventory-${idx}`} className="border-t border-slate-200 dark:border-slate-700">
+                    {inventoryPreview.headers.map((_, col) => <td key={`inventory-${idx}-${col}`} className="px-2 py-1">{row[col] || ''}</td>)}
+                  </tr>
+                ))}
+                {!inventoryPreview.rows.length && (
+                  <tr><td className="px-2 py-2 text-slate-500" colSpan={Math.max(inventoryPreview.headers.length,1)}>No inventory rows loaded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+        <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
+          <summary className="cursor-pointer text-sm font-medium">Arrangement CSV Preview ({arrangementPreview.rows.length} rows shown)</summary>
+          <div className="mt-2 overflow-auto rounded border border-slate-200 dark:border-slate-700">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-slate-200/70 dark:bg-slate-700/60">
+                <tr>
+                  {arrangementPreview.headers.map((header) => <th key={header} className="px-2 py-1 font-medium">{header}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {arrangementPreview.rows.map((row, idx) => (
+                  <tr key={`arrangement-${idx}`} className="border-t border-slate-200 dark:border-slate-700">
+                    {arrangementPreview.headers.map((_, col) => <td key={`arrangement-${idx}-${col}`} className="px-2 py-1">{row[col] || ''}</td>)}
+                  </tr>
+                ))}
+                {!arrangementPreview.rows.length && (
+                  <tr><td className="px-2 py-2 text-slate-500" colSpan={Math.max(arrangementPreview.headers.length,1)}>No arrangement rows loaded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </details>
 
         <div className="space-y-2">
           {rows.map((row) => (
