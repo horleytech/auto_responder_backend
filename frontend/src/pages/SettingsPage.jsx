@@ -12,7 +12,15 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
     const { response, data } = await fetchJsonSafe('/api/providers', {
       method: 'POST', body: JSON.stringify({ provider: providerState.activeProvider }),
     });
-    if (response.ok) return setStatus(`Saved provider: ${data.activeProvider}`);
+    if (response.ok) {
+      const persistence = String(data.persistence || 'unknown');
+      const storageLabel = persistence === 'firebase'
+        ? 'Firebase'
+        : persistence === 'memory-fallback'
+          ? 'memory (Firebase write failed)'
+          : 'memory';
+      return setStatus(`Saved provider: ${data.activeProvider} (${storageLabel})`);
+    }
     if (response.status === 403) return setStatus('Provider save failed (403). Your admin session expired — log in again.');
     return setStatus(`Provider save failed (${response.status})`);
   }
