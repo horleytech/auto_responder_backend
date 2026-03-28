@@ -6,14 +6,28 @@ import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe, saveDashboardToken } from './lib/api';
+import { fetchJsonSafe, hasDashboardSession } from './lib/api';
+
+function todayDateInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => hasDashboardSession());
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
+  const [requestSenderFocus, setRequestSenderFocus] = useState('');
+  const [sharedDateRange, setSharedDateRange] = useState(() => {
+    const today = todayDateInputValue();
+    return { start: today, end: today };
+  });
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -55,8 +69,21 @@ export default function App() {
 
   return (
     <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
-      {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
-      {activePage === 'requests' && <RequestsPage />}
+      {(activePage === 'dashboard' || activePage === 'analytics') && (
+        <AnalyticsPage
+          dateRange={sharedDateRange}
+          onDateRangeChange={setSharedDateRange}
+          onCustomerSelect={(senderId) => { setRequestSenderFocus(senderId); setActivePage('requests'); }}
+        />
+      )}
+      {activePage === 'requests' && (
+        <RequestsPage
+          dateRange={sharedDateRange}
+          onDateRangeChange={setSharedDateRange}
+          senderFocus={requestSenderFocus}
+          onSenderFocusConsumed={() => setRequestSenderFocus('')}
+        />
+      )}
       {activePage === 'dictionary' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
       {activePage === 'settings' && (

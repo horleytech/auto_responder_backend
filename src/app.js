@@ -101,6 +101,22 @@ function requestTimestamp(row) {
   return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
 }
 
+function resolveRequestStatus(row = {}) {
+  const status = String(row.status || '').trim();
+  if (status) return status;
+  if (row.replied === true) return REQUEST_STATUSES.REPLIED;
+  if (row.matchedDevice || row.aiDeviceMatch) return REQUEST_STATUSES.MATCHED_NO_REPLY;
+  return REQUEST_STATUSES.NO_MATCH;
+}
+
+function isDashboardVisibleRequest(row = {}) {
+  const status = resolveRequestStatus(row);
+  if (PERSISTED_REQUEST_STATUSES.has(status)) return true;
+  if (row.replied === true) return true;
+  if (row.matchedDevice || row.aiDeviceMatch) return true;
+  return false;
+}
+
 async function persistCatalogHistory() {
   const historicalCatalogDevices = catalog.getHistoricalDevices();
   await settingsStore.updateSettings({ historicalCatalogDevices });
@@ -255,7 +271,6 @@ app.post('/api/catalog-source', async (req, res) => {
   if (!loaded.success) return res.status(400).json(loaded);
   await settingsStore.updateSettings({
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
-    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
   });
   await persistCatalogHistory();
   return res.json({ success: true, ...loaded });
@@ -313,7 +328,7 @@ app.get('/api/requests', async (req, res) => {
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      const key = resolveRequestStatus(row);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -347,7 +362,7 @@ app.get('/api/requests', async (req, res) => {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const requests = rows.filter((row) => {
-      if (!PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim())) return false;
+      if (!isDashboardVisibleRequest(row)) return false;
       const time = requestTimestamp(row);
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
@@ -411,7 +426,7 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()))
+          .filter((row) => isDashboardVisibleRequest(row))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;
@@ -514,6 +529,17 @@ app.get('/api/catalog-mappings', async (req, res) => {
   });
 });
 
+
+
+app.get('/api/catalog-preview', (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  res.json({
+    inventory: catalog.getInventoryPreview(),
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    lastLoadedAt: catalog.getLastLoadedAt(),
+  });
+});
+
 app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
@@ -582,6 +608,7 @@ RULES:
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
+    const resolvedDevice = foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
 
     let finalResponse = null;
 
@@ -590,12 +617,18 @@ RULES:
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       requestStatus = REQUEST_STATUSES.BLOCKED_FORBIDDEN;
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
-    } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
-      responseIndex++;
-      requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
-      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
-    } else {
+    } else if (foundDevice) {
+      if (resolvedDevice && activeSupportedList.includes(resolvedDevice)) {
+        finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
+        responseIndex++;
+        requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
+        console.log(`✅ Match found: ${resolvedDevice}. Sending reply: ${finalResponse}`);
+      }
+    }
+
+    if (!finalResponse && requestStatus === REQUEST_STATUSES.NO_MATCH && foundDevice) {
+      console.log(`🤷 Device mapped but inventory/storage variant not available for message: ${foundDevice}`);
+    } else if (!finalResponse && requestStatus === REQUEST_STATUSES.NO_MATCH) {
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
@@ -606,8 +639,8 @@ RULES:
             senderId: resolveSenderId(req.body),
             senderMessage: userMessage,
             aiCategory: category,
-            aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            aiDeviceMatch: resolvedDevice || foundDevice,
+            matchedDevice: resolvedDevice || foundDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

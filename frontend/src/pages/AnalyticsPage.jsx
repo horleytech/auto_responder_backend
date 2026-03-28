@@ -1,24 +1,29 @@
 import { useEffect, useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-const timeframeOptions = [
-  { label: '1 Week', value: '1w' },
-  { label: '1 Month', value: '1m' },
-  { label: 'All Time', value: 'all' },
-];
+function todayDateInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-export default function AnalyticsPage() {
-  const [timeframe, setTimeframe] = useState('1m');
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect }) {
+  const today = todayDateInputValue();
+  const [internalDateRange, setInternalDateRange] = useState({ start: today, end: today });
+  const dateRange = externalDateRange || internalDateRange;
+  const setDateRange = onDateRangeChange || setInternalDateRange;
   const [data, setData] = useState({ devices: [], customers: [] });
-  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
+  const [requestSummary, setRequestSummary] = useState({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
     (async () => {
-      const params = new URLSearchParams({ timeframe });
+      const params = new URLSearchParams();
       if (dateRange.start) params.set('start', dateRange.start);
       if (dateRange.end) params.set('end', dateRange.end);
+
       const [analyticsResponse, requestsResponse] = await Promise.all([
         fetchJsonSafe(`/api/clean-analytics?${params.toString()}`),
         fetchJsonSafe(`/api/requests?${params.toString()}`),
@@ -27,7 +32,7 @@ export default function AnalyticsPage() {
       if (!analyticsResponse.response.ok) {
         setStatus(`Analytics API unavailable (${analyticsResponse.response.status}). ${analyticsResponse.data?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
-        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
+        setRequestSummary({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
         return;
       }
 
@@ -35,7 +40,7 @@ export default function AnalyticsPage() {
       const customersFromAnalytics = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
       const summary = requestsResponse.response.ok
         ? normalizeSummary(requestsResponse.data?.summary)
-        : { total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
+        : { total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
       const customers = customersFromAnalytics.length
         ? customersFromAnalytics
         : Object.entries(summary.bySender || {})
@@ -47,37 +52,37 @@ export default function AnalyticsPage() {
       setData({ devices, customers });
       setRequestSummary(summary);
     })();
-  }, [timeframe, dateRange.start, dateRange.end]);
+  }, [dateRange.start, dateRange.end]);
 
   return (
     <section className="space-y-6">
-      <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
-            value={dateRange.start}
-            onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          />
-          <input
-            type="date"
-            value={dateRange.end}
-            onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          />
-          <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-            {timeframeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Showing data for the selected day range.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+            <input
+              type="date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+          </div>
         </div>
       </div>
 
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Matched Requests" value={requestSummary.total} />
+        <SummaryCard label="Matched Requests" value={requestSummary.matchedTotal} />
         <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
         <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
       </div>
@@ -89,16 +94,24 @@ export default function AnalyticsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
-        <Leaderboard title="Top 5 Customers / Vendors" rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))} />
+        <Leaderboard
+          title="Top 5 Customers / Vendors"
+          rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))}
+          onRowClick={(row) => onCustomerSelect?.(row.key)}
+        />
       </div>
     </section>
   );
 }
 
 function normalizeSummary(summary) {
+  const byStatus = typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {};
+  const replied = Number(byStatus.replied || 0);
+  const matchedNoReply = Number(byStatus.matched_no_reply || 0);
   return {
     total: Number(summary?.total || 0),
-    byStatus: typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {},
+    matchedTotal: replied + matchedNoReply,
+    byStatus,
     byHour: typeof summary?.byHour === 'object' && summary?.byHour ? summary.byHour : {},
     byDevice: typeof summary?.byDevice === 'object' && summary?.byDevice ? summary.byDevice : {},
     bySender: typeof summary?.bySender === 'object' && summary?.bySender ? summary.bySender : {},
@@ -199,16 +212,21 @@ function HourlyBarChart({ title, data }) {
   );
 }
 
-function Leaderboard({ title, rows }) {
+function Leaderboard({ title, rows, onRowClick }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="mb-3 text-lg font-semibold">{title}</h3>
       <div className="space-y-2">
         {rows.map((row) => (
-          <div key={row.key} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-slate-800">
+          <button
+            key={row.key}
+            type="button"
+            onClick={() => onRowClick?.(row)}
+            className="flex w-full items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-left text-sm transition hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
+          >
             <span>{row.key}</span>
             <span className="font-semibold">{row.count}</span>
-          </div>
+          </button>
         ))}
         {!rows.length && <p className="text-sm text-slate-500">No data yet.</p>}
       </div>
