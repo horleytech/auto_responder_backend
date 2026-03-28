@@ -208,6 +208,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
 
     arrangementMap = nextMap;
+    arrangementPreview = { headers: rows[0] || [], rows: rows.slice(1, 201) };
     console.log(`✅ Arrangement map loaded: ${Object.keys(arrangementMap).length} aliases.`);
   }
 
