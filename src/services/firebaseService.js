@@ -1,14 +1,19 @@
 const admin = require('firebase-admin');
+const fs = require('fs');
+const path = require('path');
 
 function normalizeServiceAccountShape(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
-  const next = { ...parsed };
+  const nested = parsed.service_account || parsed.serviceAccount;
+  const next = { ...(nested && typeof nested === 'object' ? nested : parsed) };
   if (typeof next.private_key === 'string') {
     next.private_key = next.private_key.replace(/\\n/g, '\n');
   }
   if (!next.project_id && process.env.FIREBASE_PROJECT_ID) {
     next.project_id = process.env.FIREBASE_PROJECT_ID;
   }
+  if (!next.type) next.type = 'service_account';
+  if (!next.project_id || !next.client_email || !next.private_key) return null;
   return next;
 }
 
@@ -28,6 +33,20 @@ function safeJsonParse(candidate) {
     return JSON.parse(trimmed);
   } catch {
     return null;
+  }
+}
+
+function maybeReadJsonFile(candidate) {
+  const raw = String(candidate || '').trim();
+  if (!raw) return '';
+  const absolute = path.resolve(raw);
+  try {
+    if (!fs.existsSync(absolute)) return '';
+    const stat = fs.statSync(absolute);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > 1024 * 1024) return '';
+    return fs.readFileSync(absolute, 'utf8');
+  } catch {
+    return '';
   }
 }
 
@@ -89,22 +108,52 @@ function parseServiceAccountFromEnv() {
     || normalizedRaw === 'undefined'
     || raw === '""'
     || raw === "''";
-  if (explicitlyEmpty) {
-    return { serviceAccount: null, reason: 'missing', hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON to valid JSON or base64-encoded JSON.' };
+  const candidates = explicitlyEmpty ? [] : buildCandidates(raw);
+  if (!explicitlyEmpty) {
+    const fileContents = maybeReadJsonFile(raw);
+    if (fileContents) candidates.push(...buildCandidates(fileContents));
   }
-
-  const candidates = buildCandidates(raw);
 
   for (const candidate of candidates) {
     const parsed = safeJsonParse(candidate);
-    const normalized = normalizeServiceAccountShape(parsed);
-    if (normalized) return { serviceAccount: normalized, reason: null, hint: null };
+    if (!parsed) continue;
+    const direct = normalizeServiceAccountShape(parsed);
+    if (direct) return { serviceAccount: direct, reason: null, hint: null };
+
+    // Handles cases like JSON string of JSON (double-encoded payloads).
+    if (typeof parsed === 'string') {
+      const nestedParsed = safeJsonParse(parsed);
+      const nested = normalizeServiceAccountShape(nestedParsed);
+      if (nested) return { serviceAccount: nested, reason: null, hint: null };
+    }
+  }
+
+  const envDerived = normalizeServiceAccountShape({
+    type: 'service_account',
+    project_id: process.env.FIREBASE_PROJECT_ID || '',
+    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID || '',
+    private_key: process.env.FIREBASE_PRIVATE_KEY || '',
+    client_email: process.env.FIREBASE_CLIENT_EMAIL || '',
+    client_id: process.env.FIREBASE_CLIENT_ID || '',
+    auth_uri: process.env.FIREBASE_AUTH_URI || 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: process.env.FIREBASE_TOKEN_URI || 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL || 'https://www.googleapis.com/oauth2/v1/certs',
+    client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL || '',
+  });
+  if (envDerived) return { serviceAccount: envDerived, reason: null, hint: null };
+
+  if (explicitlyEmpty) {
+    return {
+      serviceAccount: null,
+      reason: 'missing',
+      hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON (JSON/base64/path) or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY.',
+    };
   }
 
   return {
     serviceAccount: null,
     reason: 'invalid',
-    hint: 'Value is not valid JSON. Common fixes: run pm2 restart all --update-env, remove surrounding quotes, or use base64-encoded JSON.',
+    hint: 'Value is not valid JSON. Use raw JSON/base64/JSON file path, or set FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY.',
   };
 }
 
