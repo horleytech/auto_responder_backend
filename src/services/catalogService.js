@@ -209,6 +209,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     },
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
+    getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])),
     // Backward-compatible no-op support for legacy callers.
     setHistoricalDevices: (nextDevices) => {
       legacyHistoricalDevices = Array.isArray(nextDevices)
@@ -216,6 +217,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
         : [];
     },
     getHistoricalDevices: () => legacyHistoricalDevices,
+    getLastLoadedAt: () => lastLoadedAt,
     getArrangementMap: () => arrangementMap,
     normalizeDeviceName,
     loadCatalog,

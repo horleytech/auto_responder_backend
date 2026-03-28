@@ -330,7 +330,7 @@ app.post('/api/catalog-source', async (req, res) => {
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
     arrangementCsvUrl: catalog.getArrangementCsvUrl(),
   });
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
@@ -688,7 +688,7 @@ app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
