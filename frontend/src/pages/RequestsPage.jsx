@@ -9,11 +9,13 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function RequestsPage({ senderFocus, onSenderFocusConsumed }) {
+export default function RequestsPage({ dateRange: externalDateRange, onDateRangeChange, senderFocus, onSenderFocusConsumed }) {
   const today = todayDateInputValue();
   const [requests, setRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [dateRange, setDateRange] = useState({ start: today, end: today });
+  const [internalDateRange, setInternalDateRange] = useState({ start: today, end: today });
+  const dateRange = externalDateRange || internalDateRange;
+  const setDateRange = onDateRangeChange || setInternalDateRange;
   const [expandedSenders, setExpandedSenders] = useState({});
 
   useEffect(() => {

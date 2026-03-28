@@ -9,9 +9,11 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function AnalyticsPage({ onCustomerSelect }) {
+export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect }) {
   const today = todayDateInputValue();
-  const [dateRange, setDateRange] = useState({ start: today, end: today });
+  const [internalDateRange, setInternalDateRange] = useState({ start: today, end: today });
+  const dateRange = externalDateRange || internalDateRange;
+  const setDateRange = onDateRangeChange || setInternalDateRange;
   const [data, setData] = useState({ devices: [], customers: [] });
   const [requestSummary, setRequestSummary] = useState({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
   const [status, setStatus] = useState('');
