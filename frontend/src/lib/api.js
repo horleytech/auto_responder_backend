@@ -61,3 +61,15 @@ export function saveDashboardToken(token) {
   }
   window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
+
+
+export function hasDashboardSession() {
+  if (typeof window === 'undefined') return false;
+  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY);
+  if (!rawToken) return false;
+  if (isExpiredDashboardToken(rawToken)) {
+    saveDashboardToken('');
+    return false;
+  }
+  return true;
+}
