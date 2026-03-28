@@ -2,11 +2,15 @@ const admin = require('firebase-admin');
 
 function parseServiceAccountFromEnv() {
   const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
-  if (!raw) return null;
+  if (!raw) {
+    return { serviceAccount: null, reason: 'missing' };
+  }
 
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object') {
+      return { serviceAccount: null, reason: 'invalid' };
+    }
 
     if (typeof parsed.private_key === 'string') {
       parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
@@ -16,18 +20,21 @@ function parseServiceAccountFromEnv() {
       parsed.project_id = process.env.FIREBASE_PROJECT_ID;
     }
 
-    return parsed;
+    return { serviceAccount: parsed, reason: null };
   } catch {
-    console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is present but could not be parsed.');
-    return null;
+    return { serviceAccount: null, reason: 'invalid' };
   }
 }
 
 function initFirestore() {
   try {
-    const serviceAccount = parseServiceAccountFromEnv();
+    const { serviceAccount, reason } = parseServiceAccountFromEnv();
     if (!serviceAccount) {
-      console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is missing. Running in memory mode.');
+      if (reason === 'invalid') {
+        console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is present but could not be parsed. Running in memory mode.');
+      } else {
+        console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is missing. Running in memory mode.');
+      }
       return null;
     }
 
