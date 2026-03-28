@@ -108,13 +108,11 @@ function parseServiceAccountFromEnv() {
     || normalizedRaw === 'undefined'
     || raw === '""'
     || raw === "''";
-  if (explicitlyEmpty) {
-    return { serviceAccount: null, reason: 'missing', hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON to valid JSON or base64-encoded JSON.' };
+  const candidates = explicitlyEmpty ? [] : buildCandidates(raw);
+  if (!explicitlyEmpty) {
+    const fileContents = maybeReadJsonFile(raw);
+    if (fileContents) candidates.push(...buildCandidates(fileContents));
   }
-
-  const candidates = buildCandidates(raw);
-  const fileContents = maybeReadJsonFile(raw);
-  if (fileContents) candidates.push(...buildCandidates(fileContents));
 
   for (const candidate of candidates) {
     const parsed = safeJsonParse(candidate);
@@ -143,6 +141,14 @@ function parseServiceAccountFromEnv() {
     client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL || '',
   });
   if (envDerived) return { serviceAccount: envDerived, reason: null, hint: null };
+
+  if (explicitlyEmpty) {
+    return {
+      serviceAccount: null,
+      reason: 'missing',
+      hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON (JSON/base64/path) or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY.',
+    };
+  }
 
   return {
     serviceAccount: null,
