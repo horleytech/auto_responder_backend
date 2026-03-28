@@ -781,7 +781,7 @@ RULES:
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            matchedDevice: mappedDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),
