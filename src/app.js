@@ -56,6 +56,47 @@ const REQUEST_STATUSES = {
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
 
+function parseDateInput(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'object') {
+    if (typeof value.toMillis === 'function') {
+      const millis = value.toMillis();
+      return Number.isFinite(millis) ? millis : null;
+    }
+    if (Number.isFinite(Number(value.seconds))) {
+      const seconds = Number(value.seconds);
+      const nanos = Number(value.nanoseconds || 0);
+      return (seconds * 1000) + Math.floor(nanos / 1000000);
+    }
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseDateRange(query) {
+  const start = parseDateInput(query.start);
+  const end = parseDateInput(query.end);
+  return {
+    start: start ?? 0,
+    end: end ?? Number.POSITIVE_INFINITY,
+  };
+}
+
+function normalizeRequestStatus(status) {
+  const normalized = String(status || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+  if (normalized === 'replied') return REQUEST_STATUSES.REPLIED;
+  if (normalized === 'matched_no_reply') return REQUEST_STATUSES.MATCHED_NO_REPLY;
+  if (normalized === 'blocked_forbidden') return REQUEST_STATUSES.BLOCKED_FORBIDDEN;
+  if (normalized === 'no_match') return REQUEST_STATUSES.NO_MATCH;
+  return normalized;
+}
+
+function requestTimestamp(row) {
+  return parseDateInput(row?.timestamp ?? row?.createdAt ?? row?.updatedAt);
+}
+
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);
@@ -297,7 +338,7 @@ app.get('/api/requests', async (req, res) => {
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      const key = normalizeRequestStatus(row.status || REQUEST_STATUSES.NO_MATCH);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -310,8 +351,8 @@ app.get('/api/requests', async (req, res) => {
     }, {});
 
     const byHour = requests.reduce((acc, row) => {
-      const rawTime = row.timestamp || row.processedAt || row.createdAt;
-      const millis = typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
+      const rawTime = row.timestamp || row.processedAt || row.createdAt || row.updatedAt;
+      const millis = parseDateInput(rawTime);
       if (!Number.isFinite(millis)) return acc;
       const hourBucket = new Date(millis).toISOString().slice(0, 13) + ':00';
       acc[hourBucket] = (acc[hourBucket] || 0) + 1;
@@ -324,7 +365,9 @@ app.get('/api/requests', async (req, res) => {
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const requests = rows.filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()));
+    const requests = rows
+      .map((row) => ({ ...row, status: normalizeRequestStatus(row.status) || REQUEST_STATUSES.NO_MATCH }))
+      .filter((row) => PERSISTED_REQUEST_STATUSES.has(row.status));
     res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
@@ -684,7 +727,7 @@ RULES:
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            matchedDevice: mappedDevice || foundDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

@@ -126,7 +126,7 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
   }
 
   async function markRawProcessed(rawId) {
-    const keepProcessedRaw = String(process.env.KEEP_PROCESSED_RAW || '').toLowerCase() === 'true';
+    const keepProcessedRaw = String(process.env.KEEP_PROCESSED_RAW || 'true').toLowerCase() === 'true';
     if (!firestore) {
       const index = memoryRaw.findIndex((x) => x.id === rawId);
       if (index < 0) return;
@@ -139,11 +139,11 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
       return;
     }
     const docRef = firestore.collection('ar_raw_requests').doc(rawId);
-    if (keepProcessedRaw) {
-      await docRef.set({ processed: true, processedAt: Date.now() }, { merge: true });
+    if (!keepProcessedRaw) {
+      await docRef.delete();
       return;
     }
-    await docRef.delete();
+    await docRef.set({ processed: true, processedAt: Date.now() }, { merge: true });
   }
 
   async function sync({ provider, overrides = {} }) {
