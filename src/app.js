@@ -56,6 +56,104 @@ const REQUEST_STATUSES = {
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
 
+function normalizeRequestStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseDateRange(query = {}) {
+  const startRaw = String(query.start || '').trim();
+  const endRaw = String(query.end || '').trim();
+
+  const start = startRaw ? new Date(startRaw).getTime() : 0;
+  const endBase = endRaw ? new Date(endRaw).getTime() : Number.POSITIVE_INFINITY;
+  const end = Number.isFinite(endBase) ? endBase + 86400000 - 1 : Number.POSITIVE_INFINITY;
+
+  return {
+    start: Number.isFinite(start) ? start : 0,
+    end,
+  };
+}
+
+function requestTimestamp(row) {
+  const rawTime = row.timestamp || row.processedAt || row.createdAt;
+  return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
+}
+
+async function buildEffectiveMappings() {
+  const csvMappings = Object.entries(catalog.getArrangementMap())
+    .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+
+  const effectiveMap = new Map();
+  csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  const dictionaryRows = await processor.listDictionary();
+  const learnedMappings = dictionaryRows
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row.slang);
+      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'dictionary' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  learnedMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  const settings = await settingsStore.getSettings();
+  const manualMappings = (Array.isArray(settings.manualMappings) ? settings.manualMappings : [])
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row?.alias);
+      const normalizedName = catalog.normalizeDeviceName(row?.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'manual' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  manualMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  return {
+    csvMappings,
+    learnedMappings,
+    manualMappings,
+    effectiveMap,
+  };
+}
+
+function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
+  const nextArchive = { ...(existingArchive || {}) };
+  incomingGroups.forEach((group) => {
+    const product = catalog.normalizeDeviceName(group.product);
+    if (!product) return;
+    const current = nextArchive[product] || { product, aliases: [], sources: [], updatedAt: 0 };
+    const aliasSet = new Set((current.aliases || []).map((alias) => catalog.normalizeDeviceName(alias)).filter(Boolean));
+    const sourceSet = new Set((current.sources || []).filter(Boolean));
+    (group.aliases || []).forEach((alias) => {
+      const normalizedAlias = catalog.normalizeDeviceName(alias);
+      if (normalizedAlias) aliasSet.add(normalizedAlias);
+    });
+    (group.sources || []).forEach((source) => sourceSet.add(source));
+    nextArchive[product] = {
+      product,
+      aliases: Array.from(aliasSet).sort(),
+      sources: Array.from(sourceSet).sort(),
+      updatedAt: Date.now(),
+    };
+  });
+  return nextArchive;
+}
+
+function formatProductGroupsFromArchive(archive = {}, activeProducts = new Set()) {
+  return Object.values(archive)
+    .filter((entry) => entry?.product && !activeProducts.has(entry.product))
+    .map((entry) => ({
+      product: entry.product,
+      aliases: Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean).sort() : [],
+      sources: Array.isArray(entry.sources) ? entry.sources.filter(Boolean).sort() : [],
+      updatedAt: Number(entry.updatedAt || 0),
+    }))
+    .sort((a, b) => a.product.localeCompare(b.product));
+}
+
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);

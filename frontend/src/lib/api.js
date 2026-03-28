@@ -18,7 +18,7 @@ function isExpiredDashboardToken(token) {
 export function getDashboardSessionToken() {
   if (typeof window === 'undefined') return '';
   const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY);
-  if (isExpiredDashboardToken(rawToken)) {
+  if (!rawToken || isExpiredDashboardToken(rawToken)) {
     if (rawToken) saveDashboardToken('');
     return '';
   }
@@ -27,6 +27,15 @@ export function getDashboardSessionToken() {
 
 export function hasDashboardSession() {
   return Boolean(getDashboardSessionToken());
+}
+
+export function saveDashboardToken(token) {
+  if (typeof window === 'undefined') return;
+  if (!token) {
+    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
 
 export async function fetchJsonSafe(url, options = {}) {
@@ -63,15 +72,6 @@ export async function fetchJsonSafe(url, options = {}) {
   }
 
   return { response, data };
-}
-
-export function saveDashboardToken(token) {
-  if (typeof window === 'undefined') return;
-  if (!token) {
-    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
-    return;
-  }
-  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
 
 if (typeof window !== 'undefined') {
