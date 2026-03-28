@@ -79,6 +79,14 @@ function requestTimestamp(row) {
   return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
 }
 
+function deriveRequestStatus(row = {}) {
+  const normalized = normalizeRequestStatus(row.status);
+  if (normalized) return normalized;
+  if (row.replied === true) return REQUEST_STATUSES.REPLIED;
+  if (String(row.matchedDevice || row.aiDeviceMatch || '').trim()) return REQUEST_STATUSES.MATCHED_NO_REPLY;
+  return REQUEST_STATUSES.NO_MATCH;
+}
+
 async function buildEffectiveMappings() {
   const csvMappings = Object.entries(catalog.getArrangementMap())
     .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
@@ -421,7 +429,9 @@ app.get('/api/requests', async (req, res) => {
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const requests = rows.filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()));
+    const requests = rows
+      .map((row) => ({ ...row, status: deriveRequestStatus(row) }))
+      .filter((row) => PERSISTED_REQUEST_STATUSES.has(row.status));
     res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
@@ -482,7 +492,8 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status)))
+          .map((row) => ({ ...row, status: deriveRequestStatus(row) }))
+          .filter((row) => PERSISTED_REQUEST_STATUSES.has(row.status))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;
