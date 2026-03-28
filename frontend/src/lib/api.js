@@ -17,14 +17,25 @@ function isExpiredDashboardToken(token) {
 
 export function getDashboardSessionToken() {
   if (typeof window === 'undefined') return '';
-  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY) || '';
-  const sessionToken = isExpiredDashboardToken(rawToken) ? '' : rawToken;
-  if (rawToken && !sessionToken) saveDashboardToken('');
-  return sessionToken;
+  const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY);
+  if (!rawToken || isExpiredDashboardToken(rawToken)) {
+    if (rawToken) saveDashboardToken('');
+    return '';
+  }
+  return rawToken;
 }
 
 export function hasDashboardSession() {
   return Boolean(getDashboardSessionToken());
+}
+
+export function saveDashboardToken(token) {
+  if (typeof window === 'undefined') return;
+  if (!token) {
+    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
 
 export async function fetchJsonSafe(url, options = {}) {
@@ -36,7 +47,7 @@ export async function fetchJsonSafe(url, options = {}) {
       ...options.headers,
       'Content-Type': 'application/json',
       ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
-    }
+    },
   };
 
   const response = await fetch(withBase(url), finalOptions);
@@ -53,7 +64,7 @@ export async function fetchJsonSafe(url, options = {}) {
 
   const normalizedUrl = String(url || '');
   const isAuthRoute = normalizedUrl.includes('/api/login');
-  if (response.status === 401 && !isAuthRoute) {
+  if ((response.status === 401 || response.status === 403) && !isAuthRoute) {
     saveDashboardToken('');
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('dashboard-auth-expired', { detail: { status: response.status, url: normalizedUrl } }));
@@ -63,11 +74,6 @@ export async function fetchJsonSafe(url, options = {}) {
   return { response, data };
 }
 
-export function saveDashboardToken(token) {
-  if (typeof window === 'undefined') return;
-  if (!token) {
-    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
-    return;
-  }
-  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
+if (typeof window !== 'undefined') {
+  window.hasDashboardSession = hasDashboardSession;
 }

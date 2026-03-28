@@ -4,13 +4,12 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
-import AutoCorrectPage from './pages/AutoCorrectPage';
 import LoginPage from './pages/LoginPage';
-import { fetchJsonSafe } from './lib/api';
+import { fetchJsonSafe, hasDashboardSession, saveDashboardToken } from './lib/api';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(hasDashboardSession());
-  const [authBootstrapping, setAuthBootstrapping] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => hasDashboardSession());
+  const [authBootstrapping, setAuthBootstrapping] = useState(() => hasDashboardSession());
   const [activePage, setActivePage] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(true);
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
@@ -31,6 +30,7 @@ export default function App() {
       setAuthBootstrapping(false);
       return;
     }
+
     (async () => {
       const sessionResult = await fetchJsonSafe('/api/providers');
       setIsAuthenticated(Boolean(sessionResult.response?.ok));
@@ -39,7 +39,6 @@ export default function App() {
     })();
   }, []);
 
-  // Fetch Dashboard data ONLY if logged in
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -62,7 +61,6 @@ export default function App() {
     })();
   }, [isAuthenticated]);
 
-  // THE LOCK SCREEN
   if (authBootstrapping) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
@@ -76,10 +74,14 @@ export default function App() {
   }
 
   return (
-      <DashboardLayout activePage={activePage} onPageChange={setActivePage} darkMode={darkMode} onToggleTheme={() => setDarkMode((prev) => !prev)}>
+    <DashboardLayout
+      activePage={activePage}
+      onPageChange={setActivePage}
+      darkMode={darkMode}
+      onToggleTheme={() => setDarkMode((prev) => !prev)}
+    >
       {(activePage === 'dashboard' || activePage === 'analytics') && <AnalyticsPage />}
       {activePage === 'requests' && <RequestsPage />}
-      {activePage === 'auto-correct' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
       {activePage === 'settings' && (
         <SettingsPage

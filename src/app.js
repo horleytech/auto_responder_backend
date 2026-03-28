@@ -56,6 +56,112 @@ const REQUEST_STATUSES = {
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
 
+function normalizeRequestStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseDateRange(query = {}) {
+  const startRaw = String(query.start || '').trim();
+  const endRaw = String(query.end || '').trim();
+
+  const start = startRaw ? new Date(startRaw).getTime() : 0;
+  const endBase = endRaw ? new Date(endRaw).getTime() : Number.POSITIVE_INFINITY;
+  const end = Number.isFinite(endBase) ? endBase + 86400000 - 1 : Number.POSITIVE_INFINITY;
+
+  return {
+    start: Number.isFinite(start) ? start : 0,
+    end,
+  };
+}
+
+function requestTimestamp(row) {
+  const rawTime = row.timestamp || row.processedAt || row.createdAt;
+  return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
+}
+
+function deriveRequestStatus(row = {}) {
+  const normalized = normalizeRequestStatus(row.status);
+  if (normalized) return normalized;
+  if (row.replied === true) return REQUEST_STATUSES.REPLIED;
+  if (String(row.matchedDevice || row.aiDeviceMatch || '').trim()) return REQUEST_STATUSES.MATCHED_NO_REPLY;
+  return REQUEST_STATUSES.NO_MATCH;
+}
+
+async function buildEffectiveMappings() {
+  const csvMappings = Object.entries(catalog.getArrangementMap())
+    .map(([alias, normalizedName]) => ({ alias, normalizedName, source: 'csv' }))
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+
+  const effectiveMap = new Map();
+  csvMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  const dictionaryRows = await processor.listDictionary();
+  const learnedMappings = dictionaryRows
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row.slang);
+      const normalizedName = catalog.normalizeDeviceName(row.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'dictionary' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  learnedMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  const settings = await settingsStore.getSettings();
+  const manualMappings = (Array.isArray(settings.manualMappings) ? settings.manualMappings : [])
+    .map((row) => {
+      const alias = catalog.normalizeDeviceName(row?.alias);
+      const normalizedName = catalog.normalizeDeviceName(row?.normalizedName);
+      if (!alias || !normalizedName) return null;
+      return { alias, normalizedName, source: 'manual' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+  manualMappings.forEach((row) => effectiveMap.set(row.alias, row.normalizedName));
+
+  return {
+    csvMappings,
+    learnedMappings,
+    manualMappings,
+    effectiveMap,
+  };
+}
+
+function mergeArchiveProductMappings(existingArchive = {}, incomingGroups = []) {
+  const nextArchive = { ...(existingArchive || {}) };
+  incomingGroups.forEach((group) => {
+    const product = catalog.normalizeDeviceName(group.product);
+    if (!product) return;
+    const current = nextArchive[product] || { product, aliases: [], sources: [], updatedAt: 0 };
+    const aliasSet = new Set((current.aliases || []).map((alias) => catalog.normalizeDeviceName(alias)).filter(Boolean));
+    const sourceSet = new Set((current.sources || []).filter(Boolean));
+    (group.aliases || []).forEach((alias) => {
+      const normalizedAlias = catalog.normalizeDeviceName(alias);
+      if (normalizedAlias) aliasSet.add(normalizedAlias);
+    });
+    (group.sources || []).forEach((source) => sourceSet.add(source));
+    nextArchive[product] = {
+      product,
+      aliases: Array.from(aliasSet).sort(),
+      sources: Array.from(sourceSet).sort(),
+      updatedAt: Date.now(),
+    };
+  });
+  return nextArchive;
+}
+
+function formatProductGroupsFromArchive(archive = {}, activeProducts = new Set()) {
+  return Object.values(archive)
+    .filter((entry) => entry?.product && !activeProducts.has(entry.product))
+    .map((entry) => ({
+      product: entry.product,
+      aliases: Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean).sort() : [],
+      sources: Array.isArray(entry.sources) ? entry.sources.filter(Boolean).sort() : [],
+      updatedAt: Number(entry.updatedAt || 0),
+    }))
+    .sort((a, b) => a.product.localeCompare(b.product));
+}
+
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);
@@ -65,11 +171,7 @@ function sanitizeLowercaseStringArray(value) {
   return sanitizeStringArray(value).map((v) => v.toLowerCase());
 }
 
-async function persistCatalogHistory(input, maybeCatalogService, maybeLoaded) {
-  const config = (input && typeof input === 'object' && input.firestoreDb !== undefined)
-    ? input
-    : { firestoreDb: input, catalogService: maybeCatalogService, loaded: maybeLoaded };
-  const { firestoreDb, catalogService, loaded } = config;
+async function persistCatalogHistory({ firestoreDb, catalogService, loaded }) {
   if (!firestoreDb || !loaded?.success) return;
   try {
     const payload = {
@@ -91,8 +193,11 @@ function resolveExpectedApiKey() {
 }
 
 function isAuthorized(req) {
+  const expected = resolveExpectedApiKey();
+  if (!expected) return false;
   const incoming = String(req.headers['x-api-key'] || '').trim();
-  return incoming === resolveExpectedApiKey();
+  if (!incoming) return false;
+  return incoming === expected;
 }
 
 function parseCookies(req) {
@@ -199,11 +304,19 @@ app.post('/api/providers', async (req, res) => {
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
+  let firebasePersisted = false;
   if (firestore) {
-    try { await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true }); }
+    try {
+      await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true });
+      firebasePersisted = true;
+    }
     catch (e) { console.error("Firebase save error:", e.message); }
   }
-  res.json({ success: true, activeProvider: provider });
+  res.json({
+    success: true,
+    activeProvider: provider,
+    persistence: firestore ? (firebasePersisted ? 'firebase' : 'memory-fallback') : 'memory',
+  });
 });
 
 app.get('/api/settings', async (req, res) => {
@@ -232,7 +345,7 @@ app.post('/api/catalog-source', async (req, res) => {
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
     arrangementCsvUrl: catalog.getArrangementCsvUrl(),
   });
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
@@ -324,7 +437,9 @@ app.get('/api/requests', async (req, res) => {
   try {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const requests = rows.filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()));
+    const requests = rows
+      .map((row) => ({ ...row, status: deriveRequestStatus(row) }))
+      .filter((row) => PERSISTED_REQUEST_STATUSES.has(row.status));
     res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
@@ -385,7 +500,8 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(normalizeRequestStatus(row.status)))
+          .map((row) => ({ ...row, status: deriveRequestStatus(row) }))
+          .filter((row) => PERSISTED_REQUEST_STATUSES.has(row.status))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;
@@ -590,7 +706,7 @@ app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
@@ -684,7 +800,7 @@ RULES:
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            matchedDevice: mappedDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

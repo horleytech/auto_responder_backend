@@ -71,8 +71,8 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     try {
       const rawResult = await providerService.runProvider(provider, prompt, senderMessage, overrides);
       const parsed = JSON.parse(rawResult || '{}');
-      const finalName = String(parsed.normalizedName || '').trim();
-      if (!finalName || finalName.toLowerCase() === 'null') return null;
+      const finalName = resolveCanonicalCatalogName(parsed.normalizedName);
+      if (!finalName) return null;
 
       if (normalizedMessage) dictionary.set(normalizedMessage, finalName);
       await saveToDictionary(senderMessage, finalName, firestore);
@@ -80,6 +80,20 @@ function createProcessor({ firestore, catalog, providerService, settingsStore, F
     } catch {
       return null;
     }
+  }
+
+  function resolveCanonicalCatalogName(candidate) {
+    const normalizedCandidate = normalizeDeviceName(candidate);
+    if (!normalizedCandidate || normalizedCandidate === 'null') return null;
+
+    const arrangementMatch = catalog.getArrangementMap()[normalizedCandidate];
+    const normalizedArrangementMatch = normalizeDeviceName(arrangementMatch);
+    if (normalizedArrangementMatch) return normalizedArrangementMatch;
+
+    const validProducts = new Set(catalog.getAllCatalogDevices().map((name) => normalizeDeviceName(name)).filter(Boolean));
+    if (validProducts.has(normalizedCandidate)) return normalizedCandidate;
+
+    return null;
   }
 
   async function incrementAnalytics({ deviceName, category, timestamp }) {

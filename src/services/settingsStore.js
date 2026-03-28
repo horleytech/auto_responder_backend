@@ -11,13 +11,18 @@ function createSettingsStore(db) {
   };
 
   const docRef = db ? db.collection('ar_settings').doc('config') : null;
+  const botLogicRef = db ? db.collection('ar_settings').doc('botLogic') : null;
 
   async function getSettings() {
     if (!docRef) return { ...memory };
     try {
-      const snap = await docRef.get();
-      if (!snap.exists) return { ...memory };
-      return { ...memory, ...snap.data() };
+      const [configSnap, botLogicSnap] = await Promise.all([
+        docRef.get(),
+        botLogicRef ? botLogicRef.get() : Promise.resolve(null),
+      ]);
+      const configData = configSnap?.exists ? configSnap.data() : {};
+      const botLogicData = botLogicSnap?.exists ? botLogicSnap.data() : {};
+      return { ...memory, ...botLogicData, ...configData };
     } catch (err) {
       console.error('⚠️ Failed to read settings from Firebase:', err.message);
       return { ...memory };
