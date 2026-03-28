@@ -15,21 +15,27 @@ function isExpiredDashboardToken(token) {
   return expiresAt <= Date.now();
 }
 
-export function hasDashboardSession() {
-  if (typeof window === 'undefined') return false;
+export function getDashboardSessionToken() {
+  if (typeof window === 'undefined') return '';
   const rawToken = window.localStorage.getItem(DASHBOARD_SESSION_KEY);
-  return !isExpiredDashboardToken(rawToken);
-}
-
-export async function fetchJsonSafe(url, options = {}) {
-  const rawToken = typeof window !== 'undefined' ? window.localStorage.getItem(DASHBOARD_SESSION_KEY) : '';
-  const sessionToken = isExpiredDashboardToken(rawToken) ? '' : rawToken;
-  if (rawToken && !sessionToken) saveDashboardToken('');
-  return sessionToken;
+  if (!rawToken || isExpiredDashboardToken(rawToken)) {
+    if (rawToken) saveDashboardToken('');
+    return '';
+  }
+  return rawToken;
 }
 
 export function hasDashboardSession() {
   return Boolean(getDashboardSessionToken());
+}
+
+export function saveDashboardToken(token) {
+  if (typeof window === 'undefined') return;
+  if (!token) {
+    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
 
 export async function fetchJsonSafe(url, options = {}) {
@@ -41,7 +47,7 @@ export async function fetchJsonSafe(url, options = {}) {
       ...options.headers,
       'Content-Type': 'application/json',
       ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
-    }
+    },
   };
 
   const response = await fetch(withBase(url), finalOptions);
@@ -66,15 +72,6 @@ export async function fetchJsonSafe(url, options = {}) {
   }
 
   return { response, data };
-}
-
-export function saveDashboardToken(token) {
-  if (typeof window === 'undefined') return;
-  if (!token) {
-    window.localStorage.removeItem(DASHBOARD_SESSION_KEY);
-    return;
-  }
-  window.localStorage.setItem(DASHBOARD_SESSION_KEY, token);
 }
 
 if (typeof window !== 'undefined') {
