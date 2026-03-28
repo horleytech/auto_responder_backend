@@ -106,9 +106,9 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let supportedNewDevices = [];
   let supportedUsedDevices = [];
   let legacyHistoricalDevices = [];
+  const historicalDevices = new Set();
   let arrangementMap = {};
   let lastLoadedAt = 0;
-  const historicalDevices = new Set();
 
   async function loadInventory() {
     const csvUrl = normalizeCsvUrl(inventoryCsvUrl);
@@ -183,7 +183,8 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   async function loadCatalog() {
     try {
       await Promise.all([loadInventory(), loadArrangementMap()]);
-      [...supportedNewDevices, ...supportedUsedDevices].forEach((name) => historicalDevices.add(name));
+      supportedNewDevices.forEach((name) => historicalDevices.add(name));
+      supportedUsedDevices.forEach((name) => historicalDevices.add(name));
       lastLoadedAt = Date.now();
       return {
         success: true,
@@ -191,7 +192,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
         usedCount: supportedUsedDevices.length,
         arrangementCount: Object.keys(arrangementMap).length,
         lastLoadedAt,
-        historicalCount: historicalDevices.size,
       };
     } catch (err) {
       return { success: false, error: err.message };
@@ -209,13 +209,16 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     },
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
+    getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])),
     // Backward-compatible no-op support for legacy callers.
     setHistoricalDevices: (nextDevices) => {
       legacyHistoricalDevices = Array.isArray(nextDevices)
         ? nextDevices.map((item) => normalizeDeviceName(item)).filter(Boolean)
         : [];
+      legacyHistoricalDevices.forEach((name) => historicalDevices.add(name));
     },
-    getHistoricalDevices: () => legacyHistoricalDevices,
+    getHistoricalDevices: () => Array.from(historicalDevices),
+    getLastLoadedAt: () => lastLoadedAt,
     getArrangementMap: () => arrangementMap,
     normalizeDeviceName,
     loadCatalog,

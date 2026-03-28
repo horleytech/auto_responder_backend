@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const DEFAULT_INVENTORY_CSV_URL = 'https://docs.google.com/spreadsheets/d/1Jh7TXif0dsaAVgoExEOCmkACZHPPZqIsiW4hH8T5Pts/export?format=csv';
+
 module.exports = {
   API_KEY: process.env.API_KEY || '',
   DASHBOARD_PASSWORD: process.env.DASHBOARD_PASSWORD || '',
@@ -11,8 +13,11 @@ module.exports = {
   DEFAULT_AI_PROVIDER: (process.env.DEFAULT_AI_PROVIDER || 'chatgpt').toLowerCase(),
   GOOGLE_SHEETS_CSV_URL:
     process.env.GOOGLE_SHEETS_CSV_URL ||
-    'https://docs.google.com/spreadsheets/d/1Jh7TXif0dsaAVgoExEOCmkACZHPPZqIsiW4hH8T5Pts/export?format=csv',
-  ARRANGEMENT_MAP_CSV_URL: process.env.ARRANGEMENT_MAP_CSV_URL || process.env.GOOGLE_SHEETS_CSV_URL || '',
+    DEFAULT_INVENTORY_CSV_URL,
+  ARRANGEMENT_MAP_CSV_URL:
+    process.env.ARRANGEMENT_MAP_CSV_URL ||
+    process.env.GOOGLE_SHEETS_CSV_URL ||
+    DEFAULT_INVENTORY_CSV_URL,
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || '',
   FIREBASE_SERVICE_ACCOUNT_JSON: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
   CORS_ALLOWED_ORIGINS: String(process.env.CORS_ALLOWED_ORIGINS || '')

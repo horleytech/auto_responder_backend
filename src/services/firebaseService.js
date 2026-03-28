@@ -1,30 +1,45 @@
 const admin = require('firebase-admin');
-const path = require('path');
-const fs = require('fs');
+
+function parseServiceAccountFromEnv() {
+  const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    if (typeof parsed.private_key === 'string') {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+
+    if (!parsed.project_id && process.env.FIREBASE_PROJECT_ID) {
+      parsed.project_id = process.env.FIREBASE_PROJECT_ID;
+    }
+
+    return parsed;
+  } catch {
+    console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is present but could not be parsed.');
+    return null;
+  }
+}
 
 function initFirestore() {
   try {
-    // Look for the firebase.json file in the root folder
-    const keyPath = path.join(__dirname, '../../firebase.json');
-    
-    if (!fs.existsSync(keyPath)) {
-      console.error('❌ FIREBASE ERROR: firebase.json file not found in the root directory!');
+    const serviceAccount = parseServiceAccountFromEnv();
+    if (!serviceAccount) {
+      console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is missing. Running in memory mode.');
       return null;
     }
-
-    // Require automatically parses the JSON perfectly without crashing
-    const serviceAccount = require(keyPath);
 
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
     }
-    
+
     const db = admin.firestore();
     console.log('🔥 Firebase Database connected successfully!');
     return db;
-
   } catch (err) {
     console.error('❌ Firebase Connection Error:', err.message);
     return null;

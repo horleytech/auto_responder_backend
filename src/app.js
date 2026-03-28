@@ -163,11 +163,7 @@ function sanitizeLowercaseStringArray(value) {
   return sanitizeStringArray(value).map((v) => v.toLowerCase());
 }
 
-async function persistCatalogHistory(input, maybeCatalogService, maybeLoaded) {
-  const config = (input && typeof input === 'object' && input.firestoreDb !== undefined)
-    ? input
-    : { firestoreDb: input, catalogService: maybeCatalogService, loaded: maybeLoaded };
-  const { firestoreDb, catalogService, loaded } = config;
+async function persistCatalogHistory({ firestoreDb, catalogService, loaded }) {
   if (!firestoreDb || !loaded?.success) return;
   try {
     const payload = {
@@ -189,8 +185,11 @@ function resolveExpectedApiKey() {
 }
 
 function isAuthorized(req) {
+  const expected = resolveExpectedApiKey();
+  if (!expected) return false;
   const incoming = String(req.headers['x-api-key'] || '').trim();
-  return incoming === resolveExpectedApiKey();
+  if (!incoming) return false;
+  return incoming === expected;
 }
 
 function parseCookies(req) {
@@ -330,7 +329,7 @@ app.post('/api/catalog-source', async (req, res) => {
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
     arrangementCsvUrl: catalog.getArrangementCsvUrl(),
   });
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
@@ -688,7 +687,7 @@ app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
   if (!loaded.success) return res.status(400).json(loaded);
-  await persistCatalogHistory();
+  await persistCatalogHistory({ firestoreDb: firestore, catalogService: catalog, loaded });
   return res.json({ success: true, ...loaded });
 });
 
@@ -782,7 +781,7 @@ RULES:
             senderMessage: userMessage,
             aiCategory: category,
             aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            matchedDevice: mappedDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),
