@@ -136,7 +136,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let supportedUsedDevices = [];
   let arrangementMap = {};
   let inventoryPreview = { headers: [], rows: [] };
-  let arrangementPreview = { headers: [], rows: [] };
   let lastLoadedAt = 0;
   const historicalDevices = new Set();
 
@@ -274,7 +273,6 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getUsedDevices: () => supportedUsedDevices,
     getArrangementMap: () => arrangementMap,
     getInventoryPreview: () => inventoryPreview,
-    getArrangementPreview: () => arrangementPreview,
     getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])).sort(),
     getHistoricalDevices: () => Array.from(historicalDevices).sort(),
     setHistoricalDevices: (list = []) => {

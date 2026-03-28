@@ -7,11 +7,8 @@ export default function AutoCorrectPage() {
   const [manualMappings, setManualMappings] = useState([]);
   const [mergedMappings, setMergedMappings] = useState([]);
   const [catalogDevices, setCatalogDevices] = useState([]);
-  const [removedFromCsv, setRemovedFromCsv] = useState([]);
-  const [seenOutsideCatalog, setSeenOutsideCatalog] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
   const [inventoryPreview, setInventoryPreview] = useState({ headers: [], rows: [] });
-  const [arrangementPreview, setArrangementPreview] = useState({ headers: [], rows: [] });
   const [slang, setSlang] = useState('');
   const [normalizedName, setNormalizedName] = useState('');
   const [editingId, setEditingId] = useState('');
@@ -19,7 +16,6 @@ export default function AutoCorrectPage() {
 
   const normalizedOptions = Array.from(new Set([
     ...catalogDevices,
-    ...seenOutsideCatalog.map((row) => row.normalizedName).filter(Boolean),
     ...mergedMappings.map((row) => row.normalizedName).filter(Boolean),
   ])).sort((a, b) => a.localeCompare(b));
 
@@ -38,8 +34,6 @@ export default function AutoCorrectPage() {
     setManualMappings(data.manualMappings || []);
     setMergedMappings(data.mergedMappings || []);
     setCatalogDevices(data.catalogDevices || []);
-    setRemovedFromCsv(data.removedFromCsv || []);
-    setSeenOutsideCatalog(data.seenOutsideCatalog || []);
     setLastLoadedAt(Number(data.lastLoadedAt || 0));
   }
 
@@ -49,7 +43,6 @@ export default function AutoCorrectPage() {
     const { response, data } = await fetchJsonSafe('/api/catalog-preview');
     if (!response.ok) return;
     setInventoryPreview(data.inventory || { headers: [], rows: [] });
-    setArrangementPreview(data.arrangement || { headers: [], rows: [] });
   }
 
   async function refreshCatalog() {
@@ -146,18 +139,6 @@ export default function AutoCorrectPage() {
           {lastLoadedAt ? ` • last sync: ${new Date(lastLoadedAt).toLocaleString()}` : ''}
         </p>
 
-        {!!removedFromCsv.length && (
-          <details className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-700/40 dark:bg-orange-950/20" open>
-            <summary className="cursor-pointer text-sm font-medium">Previously in CSV, currently removed ({removedFromCsv.length})</summary>
-            <p className="mt-1 text-xs text-orange-700 dark:text-orange-300">
-              If any of these products return to the CSV, they will automatically move back into active CSV mappings.
-            </p>
-            <div className="mt-2 max-h-56 space-y-1 overflow-auto text-sm">
-              {removedFromCsv.map((name) => <div key={name}>{name}</div>)}
-            </div>
-          </details>
-        )}
-
         {!!manualMappings.length && (
           <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300">
             Manual mappings are additive: they are kept as extra mappings and do not overwrite CSV aliases.
@@ -188,20 +169,29 @@ export default function AutoCorrectPage() {
           </details>
         )}
 
-        {!!seenOutsideCatalog.length && (
-          <details className="mb-4 rounded-lg bg-amber-50 p-3 dark:bg-amber-950/20" open>
-            <summary className="cursor-pointer text-sm font-medium">Seen but not in CSV ({seenOutsideCatalog.length})</summary>
-            <div className="mt-2 space-y-2 text-sm">
-              {seenOutsideCatalog.map((row) => (
-                <div key={row.normalizedName} className="rounded bg-white p-2 dark:bg-slate-900">
-                  <div className="font-medium">{row.normalizedName}</div>
-                  <div className="text-xs text-slate-500">source: {row.source}</div>
-                  {!!row.aliases?.length && <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">examples: {row.aliases.join(' | ')}</div>}
-                </div>
-              ))}
-            </div>
-          </details>
-        )}
+
+        <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>
+          <summary className="cursor-pointer text-sm font-medium">Inventory CSV Preview ({inventoryPreview.rows.length} rows shown)</summary>
+          <div className="mt-2 overflow-auto rounded border border-slate-200 dark:border-slate-700">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-slate-200/70 dark:bg-slate-700/60">
+                <tr>
+                  {inventoryPreview.headers.map((header) => <th key={header} className="px-2 py-1 font-medium">{header}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {inventoryPreview.rows.map((row, idx) => (
+                  <tr key={`inventory-${idx}`} className="border-t border-slate-200 dark:border-slate-700">
+                    {inventoryPreview.headers.map((_, col) => <td key={`inventory-${idx}-${col}`} className="px-2 py-1">{row[col] || ''}</td>)}
+                  </tr>
+                ))}
+                {!inventoryPreview.rows.length && (
+                  <tr><td className="px-2 py-2 text-slate-500" colSpan={Math.max(inventoryPreview.headers.length,1)}>No inventory rows loaded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </details>
 
 
         <details className="mb-4 rounded-lg bg-slate-100 p-3 dark:bg-slate-800" open>

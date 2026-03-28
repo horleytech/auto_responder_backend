@@ -1,24 +1,27 @@
 import { useEffect, useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-const timeframeOptions = [
-  { label: '1 Week', value: '1w' },
-  { label: '1 Month', value: '1m' },
-  { label: 'All Time', value: 'all' },
-];
+function todayDateInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export default function AnalyticsPage() {
-  const [timeframe, setTimeframe] = useState('1m');
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const today = todayDateInputValue();
+  const [dateRange, setDateRange] = useState({ start: today, end: today });
   const [data, setData] = useState({ devices: [], customers: [] });
   const [requestSummary, setRequestSummary] = useState({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
     (async () => {
-      const params = new URLSearchParams({ timeframe });
+      const params = new URLSearchParams();
       if (dateRange.start) params.set('start', dateRange.start);
       if (dateRange.end) params.set('end', dateRange.end);
+
       const [analyticsResponse, requestsResponse] = await Promise.all([
         fetchJsonSafe(`/api/clean-analytics?${params.toString()}`),
         fetchJsonSafe(`/api/requests?${params.toString()}`),
@@ -47,30 +50,30 @@ export default function AnalyticsPage() {
       setData({ devices, customers });
       setRequestSummary(summary);
     })();
-  }, [timeframe, dateRange.start, dateRange.end]);
+  }, [dateRange.start, dateRange.end]);
 
   return (
     <section className="space-y-6">
-      <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
-            value={dateRange.start}
-            onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          />
-          <input
-            type="date"
-            value={dateRange.end}
-            onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          />
-          <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-            {timeframeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold">Analytics Dashboard</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Showing data for the selected day range.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+            <input
+              type="date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+          </div>
         </div>
       </div>
 
