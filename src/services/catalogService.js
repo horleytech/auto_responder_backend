@@ -35,6 +35,35 @@ function isUsedCondition(condition) {
   return lower.includes('used') || lower.includes('grade a') || lower.includes('uk used');
 }
 
+
+
+function normalizeStorageValue(value) {
+  const raw = String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  const match = raw.match(/(\d+(?:\.\d+)?)\s*(tb|gb)/i);
+  if (!match) return '';
+  return `${match[1]}${match[2].toLowerCase()}`;
+}
+
+function deviceHasStorageToken(deviceName, storageToken) {
+  if (!storageToken) return false;
+  const compact = String(deviceName || '').toLowerCase().replace(/\s+/g, '');
+  return compact.includes(storageToken);
+}
+
+function stripStorageFromDeviceName(deviceName) {
+  return normalizeDeviceName(String(deviceName || '').replace(/\b\d+(?:\.\d+)?\s*(?:gb|tb)\b/gi, ' '));
+}
+
+function buildDeviceNameWithStorage(deviceType, storageValue) {
+  const normalizedDevice = normalizeDeviceName(deviceType);
+  if (!normalizedDevice) return null;
+  const storageToken = normalizeStorageValue(storageValue);
+  if (!storageToken) return normalizedDevice;
+  if (deviceHasStorageToken(normalizedDevice, storageToken)) return normalizedDevice;
+  return normalizeDeviceName(`${normalizedDevice} ${storageToken}`);
+}
+
 function parseCsv(text) {
   const input = String(text ?? '');
   const rows = [];
@@ -106,6 +135,8 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
   let supportedNewDevices = [];
   let supportedUsedDevices = [];
   let arrangementMap = {};
+  let inventoryPreview = { headers: [], rows: [] };
+  let arrangementPreview = { headers: [], rows: [] };
   let lastLoadedAt = 0;
   const historicalDevices = new Set();
 
@@ -121,6 +152,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     const deviceIndex = headers.indexOf('Device Type');
     const conditionIndex = headers.indexOf('Condition');
     const priceIndex = headers.indexOf('Regular price');
+    const storageIndex = headers.findIndex((h) => String(h || '').toLowerCase().includes('storage capacity/configuration') || String(h || '').toLowerCase().includes('storage'));
 
     if (deviceIndex < 0 || conditionIndex < 0 || priceIndex < 0) {
       throw new Error('Inventory CSV missing required headers: Device Type, Condition, Regular price');
@@ -138,7 +170,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
       const price = row[priceIndex];
       if (!deviceType || !price || price.startsWith('#')) continue;
 
-      const normalized = normalizeDeviceName(deviceType);
+      const normalized = buildDeviceNameWithStorage(deviceType, storageIndex >= 0 ? row[storageIndex] : '');
       if (!normalized) continue;
 
       if (isUsedCondition(condition)) usedSet.add(normalized);
@@ -147,6 +179,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
 
     supportedNewDevices = Array.from(newSet);
     supportedUsedDevices = Array.from(usedSet);
+    inventoryPreview = { headers, rows: rows.slice(1, 201) };
     console.log(`✅ Inventory CSV loaded: ${supportedNewDevices.length} new, ${supportedUsedDevices.length} used devices.`);
   }
 
@@ -176,6 +209,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
 
     arrangementMap = nextMap;
+    arrangementPreview = { headers: rows[0] || [], rows: rows.slice(1, 201) };
     console.log(`✅ Arrangement map loaded: ${Object.keys(arrangementMap).length} aliases.`);
   }
 
@@ -197,6 +231,30 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     }
   }
 
+
+
+  function resolveDeviceForMessage({ mappedDevice, userMessage, category = 'new' }) {
+    const normalizedMapped = normalizeDeviceName(mappedDevice);
+    if (!normalizedMapped) return null;
+
+    const inventoryPool = category === 'used' ? supportedUsedDevices : supportedNewDevices;
+    if (!inventoryPool.length) return normalizedMapped;
+
+    if (inventoryPool.includes(normalizedMapped)) return normalizedMapped;
+
+    const mappedBase = stripStorageFromDeviceName(normalizedMapped);
+    const candidates = inventoryPool.filter((item) => stripStorageFromDeviceName(item) === mappedBase);
+    if (!candidates.length) return normalizedMapped;
+
+    const requestedStorage = normalizeStorageValue(userMessage);
+    if (requestedStorage) {
+      const exactStorageCandidate = candidates.find((item) => deviceHasStorageToken(item, requestedStorage));
+      if (exactStorageCandidate) return exactStorageCandidate;
+    }
+
+    return candidates[0];
+  }
+
   function mapArrangement(input) {
     const normalized = normalizeDeviceName(input);
     if (!normalized) return null;
@@ -215,6 +273,8 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     getNewDevices: () => supportedNewDevices,
     getUsedDevices: () => supportedUsedDevices,
     getArrangementMap: () => arrangementMap,
+    getInventoryPreview: () => inventoryPreview,
+    getArrangementPreview: () => arrangementPreview,
     getAllCatalogDevices: () => Array.from(new Set([...supportedNewDevices, ...supportedUsedDevices])).sort(),
     getHistoricalDevices: () => Array.from(historicalDevices).sort(),
     setHistoricalDevices: (list = []) => {
@@ -226,6 +286,7 @@ function createCatalogService(initialInventoryCsvUrl, initialArrangementCsvUrl) 
     },
     getLastLoadedAt: () => lastLoadedAt,
     mapArrangement,
+    resolveDeviceForMessage,
     normalizeDeviceName,
     loadCatalog,
   };

@@ -530,6 +530,19 @@ app.get('/api/catalog-mappings', async (req, res) => {
   });
 });
 
+
+
+app.get('/api/catalog-preview', (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  res.json({
+    inventory: catalog.getInventoryPreview(),
+    arrangement: catalog.getArrangementPreview(),
+    inventoryCsvUrl: catalog.getInventoryCsvUrl(),
+    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
+    lastLoadedAt: catalog.getLastLoadedAt(),
+  });
+});
+
 app.post('/api/catalog-refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await catalog.loadCatalog();
@@ -598,6 +611,7 @@ RULES:
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
+    const resolvedDevice = foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
 
     let finalResponse = null;
 
@@ -606,12 +620,18 @@ RULES:
     if (foundForbidden && activeForbiddenList.includes(foundForbidden)) {
       requestStatus = REQUEST_STATUSES.BLOCKED_FORBIDDEN;
       console.log(`🚫 Blocked by forbidden phrase: ${foundForbidden}`);
-    } else if (foundDevice && activeSupportedList.includes(foundDevice)) {
-      finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
-      responseIndex++;
-      requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
-      console.log(`✅ Match found: ${foundDevice}. Sending reply: ${finalResponse}`);
-    } else {
+    } else if (foundDevice) {
+      if (resolvedDevice && activeSupportedList.includes(resolvedDevice)) {
+        finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
+        responseIndex++;
+        requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
+        console.log(`✅ Match found: ${resolvedDevice}. Sending reply: ${finalResponse}`);
+      }
+    }
+
+    if (!finalResponse && requestStatus === REQUEST_STATUSES.NO_MATCH && foundDevice) {
+      console.log(`🤷 Device mapped but inventory/storage variant not available for message: ${foundDevice}`);
+    } else if (!finalResponse && requestStatus === REQUEST_STATUSES.NO_MATCH) {
       console.log(`🤷 No match or forbidden phrase found.`);
     }
 
@@ -622,8 +642,8 @@ RULES:
             senderId: resolveSenderId(req.body),
             senderMessage: userMessage,
             aiCategory: category,
-            aiDeviceMatch: foundDevice,
-            matchedDevice: foundDevice,
+            aiDeviceMatch: resolvedDevice || foundDevice,
+            matchedDevice: resolvedDevice || foundDevice,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),
