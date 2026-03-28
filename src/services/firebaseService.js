@@ -22,7 +22,13 @@ function decodeBase64(value) {
 
 function parseServiceAccountFromEnv() {
   const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
-  if (!raw) {
+  const normalizedRaw = raw.toLowerCase();
+  const explicitlyEmpty = !raw
+    || normalizedRaw === 'null'
+    || normalizedRaw === 'undefined'
+    || raw === '""'
+    || raw === "''";
+  if (explicitlyEmpty) {
     return { serviceAccount: null, reason: 'missing', hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON to valid JSON or base64-encoded JSON.' };
   }
 
