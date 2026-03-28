@@ -1,33 +1,81 @@
 const admin = require('firebase-admin');
 
+function normalizeServiceAccountShape(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const next = { ...parsed };
+  if (typeof next.private_key === 'string') {
+    next.private_key = next.private_key.replace(/\\n/g, '\n');
+  }
+  if (!next.project_id && process.env.FIREBASE_PROJECT_ID) {
+    next.project_id = process.env.FIREBASE_PROJECT_ID;
+  }
+  return next;
+}
+
+function decodeBase64(value) {
+  try {
+    return Buffer.from(value, 'base64').toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
 function parseServiceAccountFromEnv() {
   const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
-  if (!raw) return null;
+  const normalizedRaw = raw.toLowerCase();
+  const explicitlyEmpty = !raw
+    || normalizedRaw === 'null'
+    || normalizedRaw === 'undefined'
+    || raw === '""'
+    || raw === "''";
+  if (explicitlyEmpty) {
+    return { serviceAccount: null, reason: 'missing', hint: 'Set FIREBASE_SERVICE_ACCOUNT_JSON to valid JSON or base64-encoded JSON.' };
+  }
+
+  const candidates = [raw];
+  const wrappedInQuotes = (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"));
+  if (wrappedInQuotes) candidates.push(raw.slice(1, -1));
+  const decoded = decodeBase64(raw);
+  if (decoded && decoded !== raw) candidates.push(decoded);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const normalized = normalizeServiceAccountShape(parsed);
+      if (normalized) {
+        return { serviceAccount: normalized, reason: null, hint: null };
+      }
+    } catch {
+      // Keep trying fallback encodings.
+    }
+  }
 
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-
-    if (typeof parsed.private_key === 'string') {
-      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    const parsed = JSON.parse(raw.replace(/\\"/g, '"'));
+    const normalized = normalizeServiceAccountShape(parsed);
+    if (normalized) {
+      return { serviceAccount: normalized, reason: null, hint: null };
     }
-
-    if (!parsed.project_id && process.env.FIREBASE_PROJECT_ID) {
-      parsed.project_id = process.env.FIREBASE_PROJECT_ID;
-    }
-
-    return parsed;
   } catch {
-    console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is present but could not be parsed.');
-    return null;
+    // no-op: fall through to invalid reason.
   }
+  return {
+    serviceAccount: null,
+    reason: 'invalid',
+    hint: 'Value is not valid JSON. Common fixes: remove surrounding quotes or use base64-encoded JSON.',
+  };
 }
 
 function initFirestore() {
   try {
-    const serviceAccount = parseServiceAccountFromEnv();
+    const { serviceAccount, reason, hint } = parseServiceAccountFromEnv();
     if (!serviceAccount) {
-      console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is missing. Running in memory mode.');
+      if (reason === 'invalid') {
+        console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is present but could not be parsed. Running in memory mode.');
+      } else {
+        console.error('❌ FIREBASE ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is missing. Running in memory mode.');
+      }
+      if (hint) console.error(`ℹ️ FIREBASE HINT: ${hint}`);
       return null;
     }
 
