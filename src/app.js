@@ -271,7 +271,6 @@ app.post('/api/catalog-source', async (req, res) => {
   if (!loaded.success) return res.status(400).json(loaded);
   await settingsStore.updateSettings({
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
-    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
   });
   await persistCatalogHistory();
   return res.json({ success: true, ...loaded });
@@ -536,9 +535,7 @@ app.get('/api/catalog-preview', (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   res.json({
     inventory: catalog.getInventoryPreview(),
-    arrangement: catalog.getArrangementPreview(),
     inventoryCsvUrl: catalog.getInventoryCsvUrl(),
-    arrangementCsvUrl: catalog.getArrangementCsvUrl(),
     lastLoadedAt: catalog.getLastLoadedAt(),
   });
 });
