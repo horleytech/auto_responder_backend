@@ -101,6 +101,22 @@ function requestTimestamp(row) {
   return typeof rawTime === 'number' ? rawTime : new Date(rawTime).getTime();
 }
 
+function resolveRequestStatus(row = {}) {
+  const status = String(row.status || '').trim();
+  if (status) return status;
+  if (row.replied === true) return REQUEST_STATUSES.REPLIED;
+  if (row.matchedDevice || row.aiDeviceMatch) return REQUEST_STATUSES.MATCHED_NO_REPLY;
+  return REQUEST_STATUSES.NO_MATCH;
+}
+
+function isDashboardVisibleRequest(row = {}) {
+  const status = resolveRequestStatus(row);
+  if (PERSISTED_REQUEST_STATUSES.has(status)) return true;
+  if (row.replied === true) return true;
+  if (row.matchedDevice || row.aiDeviceMatch) return true;
+  return false;
+}
+
 async function persistCatalogHistory() {
   const historicalCatalogDevices = catalog.getHistoricalDevices();
   await settingsStore.updateSettings({ historicalCatalogDevices });
@@ -313,7 +329,7 @@ app.get('/api/requests', async (req, res) => {
 
   const summarizeRequests = (requests) => {
     const byStatus = requests.reduce((acc, row) => {
-      const key = String(row.status || REQUEST_STATUSES.NO_MATCH);
+      const key = resolveRequestStatus(row);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -347,7 +363,7 @@ app.get('/api/requests', async (req, res) => {
     const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const requests = rows.filter((row) => {
-      if (!PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim())) return false;
+      if (!isDashboardVisibleRequest(row)) return false;
       const time = requestTimestamp(row);
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
@@ -411,7 +427,7 @@ app.get('/api/clean-analytics', async (req, res) => {
         const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((row) => PERSISTED_REQUEST_STATUSES.has(String(row.status || '').trim()))
+          .filter((row) => isDashboardVisibleRequest(row))
           .filter((row) => {
             const at = requestTimestamp(row);
             return Number.isFinite(at) ? at >= since && at <= until : true;

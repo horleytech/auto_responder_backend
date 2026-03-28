@@ -11,7 +11,7 @@ export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('1m');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [data, setData] = useState({ devices: [], customers: [] });
-  const [requestSummary, setRequestSummary] = useState({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
+  const [requestSummary, setRequestSummary] = useState({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -27,7 +27,7 @@ export default function AnalyticsPage() {
       if (!analyticsResponse.response.ok) {
         setStatus(`Analytics API unavailable (${analyticsResponse.response.status}). ${analyticsResponse.data?.error || 'Check if server is running and Firebase is configured.'}`);
         setData({ devices: [], customers: [] });
-        setRequestSummary({ total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
+        setRequestSummary({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
         return;
       }
 
@@ -35,7 +35,7 @@ export default function AnalyticsPage() {
       const customersFromAnalytics = Array.isArray(analyticsResponse.data?.customers) ? analyticsResponse.data.customers : [];
       const summary = requestsResponse.response.ok
         ? normalizeSummary(requestsResponse.data?.summary)
-        : { total: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
+        : { total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} };
       const customers = customersFromAnalytics.length
         ? customersFromAnalytics
         : Object.entries(summary.bySender || {})
@@ -77,7 +77,7 @@ export default function AnalyticsPage() {
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Matched Requests" value={requestSummary.total} />
+        <SummaryCard label="Matched Requests" value={requestSummary.matchedTotal} />
         <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
         <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
       </div>
@@ -96,9 +96,13 @@ export default function AnalyticsPage() {
 }
 
 function normalizeSummary(summary) {
+  const byStatus = typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {};
+  const replied = Number(byStatus.replied || 0);
+  const matchedNoReply = Number(byStatus.matched_no_reply || 0);
   return {
     total: Number(summary?.total || 0),
-    byStatus: typeof summary?.byStatus === 'object' && summary?.byStatus ? summary.byStatus : {},
+    matchedTotal: replied + matchedNoReply,
+    byStatus,
     byHour: typeof summary?.byHour === 'object' && summary?.byHour ? summary.byHour : {},
     byDevice: typeof summary?.byDevice === 'object' && summary?.byDevice ? summary.byDevice : {},
     bySender: typeof summary?.bySender === 'object' && summary?.bySender ? summary.bySender : {},
