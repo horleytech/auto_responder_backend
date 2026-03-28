@@ -304,11 +304,19 @@ app.post('/api/providers', async (req, res) => {
   const provider = String(req.body?.provider || '').toLowerCase().trim();
   providerService.setActiveProvider(provider);
   await settingsStore.updateSettings({ activeProvider: provider });
+  let firebasePersisted = false;
   if (firestore) {
-    try { await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true }); }
+    try {
+      await firestore.collection('ar_settings').doc('system').set({ activeProvider: provider }, { merge: true });
+      firebasePersisted = true;
+    }
     catch (e) { console.error("Firebase save error:", e.message); }
   }
-  res.json({ success: true, activeProvider: provider });
+  res.json({
+    success: true,
+    activeProvider: provider,
+    persistence: firestore ? (firebasePersisted ? 'firebase' : 'memory-fallback') : 'memory',
+  });
 });
 
 app.get('/api/settings', async (req, res) => {
