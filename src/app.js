@@ -185,8 +185,11 @@ function resolveExpectedApiKey() {
 }
 
 function isAuthorized(req) {
+  const expected = resolveExpectedApiKey();
+  if (!expected) return false;
   const incoming = String(req.headers['x-api-key'] || '').trim();
-  return incoming === resolveExpectedApiKey();
+  if (!incoming) return false;
+  return incoming === expected;
 }
 
 function parseCookies(req) {
