@@ -129,6 +129,78 @@ function sanitizeStringArray(value) {
   return value.map((v) => String(v || '').trim()).filter(Boolean);
 }
 
+function summarizeCustomers(rows = []) {
+  const byDevice = rows.reduce((acc, row) => {
+    const key = String(row.device || '').trim();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const byCustomer = rows.reduce((acc, row) => {
+    const key = String(row.customerName || '').trim();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    totalRows: rows.length,
+    uniqueCustomers: Object.keys(byCustomer).length,
+    uniqueDevices: Object.keys(byDevice).length,
+    byDevice,
+    topCustomers: Object.entries(byCustomer)
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, 10)
+      .map(([name, count]) => ({ name, count })),
+    topDevices: Object.entries(byDevice)
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, 10)
+      .map(([name, count]) => ({ name, count })),
+  };
+}
+
+async function persistOnlineCustomersSnapshot() {
+  if (!firestore) return { mode: 'memory', persisted: 0 };
+  const rows = onlineCustomersService.getCustomers();
+  const summary = summarizeCustomers(rows);
+  const nowIso = new Date().toISOString();
+
+  await firestore.collection('ar_settings').doc('onlineCustomers').set({
+    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
+    rowCount: rows.length,
+    sheetCount: onlineCustomersService.getScannedSheets().length,
+    lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
+    updatedAt: nowIso,
+    summary,
+  }, { merge: true });
+
+  const batchSize = 400;
+  const targetCollection = firestore.collection('ar_online_customers');
+  const oldSnap = await targetCollection.limit(1200).get();
+  if (!oldSnap.empty) {
+    const cleanup = firestore.batch();
+    oldSnap.docs.forEach((doc) => cleanup.delete(doc.ref));
+    await cleanup.commit();
+  }
+
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const batch = firestore.batch();
+    chunk.forEach((row, index) => {
+      const ref = targetCollection.doc(`${Date.now()}-${i + index}`);
+      batch.set(ref, {
+        ...row,
+        normalizedKey: `${String(row.customerName || '').toLowerCase()}::${String(row.device || '').toLowerCase()}`,
+        syncedAt: onlineCustomersService.getLastSyncedAt() || Date.now(),
+      });
+    });
+    await batch.commit();
+  }
+
+  return { mode: 'firebase', persisted: rows.length };
+}
+
 function resolveExpectedApiKey() {
   return String(process.env.API_KEY || runtimeApiKey || API_KEY).trim();
 }
@@ -283,14 +355,16 @@ app.post('/api/online-customers-source', async (req, res) => {
   await settingsStore.updateSettings({ onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl() });
   const loaded = await onlineCustomersService.loadCustomers();
   if (!loaded.success) return res.status(400).json(loaded);
-  return res.json({ success: true, ...loaded });
+  const persistence = await persistOnlineCustomersSnapshot();
+  return res.json({ success: true, ...loaded, persistence });
 });
 
 app.post('/api/online-customers/refresh', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const loaded = await onlineCustomersService.loadCustomers();
   if (!loaded.success) return res.status(400).json(loaded);
-  return res.json({ success: true, ...loaded });
+  const persistence = await persistOnlineCustomersSnapshot();
+  return res.json({ success: true, ...loaded, persistence });
 });
 
 app.get('/api/online-customers', async (req, res) => {
@@ -324,16 +398,24 @@ app.get('/api/online-customers', async (req, res) => {
   const overlap = onlineCustomers
     .filter((row) => marketSet.has(`${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`))
     .slice(0, 200);
+  const onlineSummary = summarizeCustomers(onlineCustomers);
+  const marketSummary = summarizeCustomers(marketCustomers);
+  const comparisonByDevice = {};
+  Object.keys({ ...onlineSummary.byDevice, ...marketSummary.byDevice }).forEach((device) => {
+    comparisonByDevice[device] = {
+      online: Number(onlineSummary.byDevice[device] || 0),
+      market: Number(marketSummary.byDevice[device] || 0),
+    };
+  });
 
   res.json({
     onlineCustomers,
     marketCustomers: marketCustomers.slice(0, 500),
     overlap,
-    onlineSummary: {
-      totalRows: onlineCustomers.length,
-      uniqueCustomers: new Set(onlineCustomers.map((row) => row.customerName.toLowerCase())).size,
-      uniqueDevices: new Set(onlineCustomers.map((row) => row.device.toLowerCase())).size,
-    },
+    onlineSummary,
+    marketSummary,
+    overlapSummary: summarizeCustomers(overlap),
+    comparisonByDevice,
   });
 });
 
@@ -768,6 +850,7 @@ app.get('*', (req, res) => {
     if (onlineCustomersService.getSpreadsheetUrl()) {
       const onlineLoaded = await onlineCustomersService.loadCustomers();
       if (onlineLoaded.success) {
+        await persistOnlineCustomersSnapshot();
         console.log(`🛒 Online buyers loaded (${onlineLoaded.rowCount} rows across ${onlineLoaded.sheetCount} sheets).`);
       } else {
         console.error(`❌ Online buyers failed to load: ${onlineLoaded.error}`);

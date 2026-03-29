@@ -114,6 +114,11 @@ export default function OnlineCustomersPage({ dateRange }) {
         <SummaryCard label="Overlap (same customer + device)" value={overlapCountLabel} />
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+        <p>Sheets scanned: <strong>{source.sheetsScanned?.length || 0}</strong></p>
+        <p>Last synced: <strong>{source.lastSyncedAt ? new Date(source.lastSyncedAt).toLocaleString() : 'Not synced yet'}</strong></p>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <SimpleTable
           title={`Online Customers (${onlineCustomers.length})`}
