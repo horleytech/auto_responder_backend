@@ -8,7 +8,6 @@ const {
 const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
 const { createProviderService } = require('./services/providerService');
-const { createOnlineCustomersService } = require('./services/onlineCustomersService');
 const settingsStore = require('./services/settingsStore');
 const { createProcessor } = require('./services/processor');
 const { createMaintenanceRouter } = require('./controllers/maintenance');
@@ -45,7 +44,6 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
-const onlineCustomersService = createOnlineCustomersService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
@@ -57,9 +55,6 @@ const REQUEST_STATUSES = {
   NO_MATCH: 'no_match',
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
-const ONLINE_SYNC_INTERVAL_MS = 8 * 60 * 60 * 1000;
-let onlineSyncTimer = null;
-let onlineSyncInProgress = false;
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -130,88 +125,6 @@ async function persistCatalogHistory() {
 function sanitizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v || '').trim()).filter(Boolean);
-}
-
-function summarizeCustomers(rows = []) {
-  const byDevice = rows.reduce((acc, row) => {
-    const key = String(row.device || '').trim();
-    if (!key) return acc;
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-
-  const byCustomer = rows.reduce((acc, row) => {
-    const key = String(row.customerName || '').trim();
-    if (!key) return acc;
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-
-  return {
-    totalRows: rows.length,
-    uniqueCustomers: Object.keys(byCustomer).length,
-    uniqueDevices: Object.keys(byDevice).length,
-    byDevice,
-    topCustomers: Object.entries(byCustomer)
-      .sort((a, b) => Number(b[1]) - Number(a[1]))
-      .slice(0, 10)
-      .map(([name, count]) => ({ name, count })),
-    topDevices: Object.entries(byDevice)
-      .sort((a, b) => Number(b[1]) - Number(a[1]))
-      .slice(0, 10)
-      .map(([name, count]) => ({ name, count })),
-  };
-}
-
-function filterRowsByDateRange(rows = [], start, end, requireTimestamp = false) {
-  return rows.filter((row) => {
-    const at = Number(row.timestamp);
-    if (!Number.isFinite(at)) return !requireTimestamp;
-    return at >= start && at <= end;
-  });
-}
-
-async function persistOnlineCustomersSnapshot() {
-  if (!firestore) return { mode: 'memory', persisted: 0 };
-  const rows = onlineCustomersService.getCustomers();
-  const summary = summarizeCustomers(rows);
-  const nowIso = new Date().toISOString();
-
-  await firestore.collection('ar_settings').doc('onlineCustomers').set({
-    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
-    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
-    rowCount: rows.length,
-    sheetCount: onlineCustomersService.getScannedSheets().length,
-    lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
-    updatedAt: nowIso,
-    summary,
-  }, { merge: true });
-
-  const batchSize = 400;
-  const targetCollection = firestore.collection('ar_online_customers');
-  const oldSnap = await targetCollection.limit(1200).get();
-  if (!oldSnap.empty) {
-    const cleanup = firestore.batch();
-    oldSnap.docs.forEach((doc) => cleanup.delete(doc.ref));
-    await cleanup.commit();
-  }
-
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const chunk = rows.slice(i, i + batchSize);
-    const batch = firestore.batch();
-    chunk.forEach((row, index) => {
-      const ref = targetCollection.doc(`${Date.now()}-${i + index}`);
-      batch.set(ref, {
-        ...row,
-        normalizedKey: `${String(row.customerName || '').toLowerCase()}::${String(row.device || '').toLowerCase()}`,
-        dateKey: row.dateKey || '',
-        syncedAt: onlineCustomersService.getLastSyncedAt() || Date.now(),
-      });
-    });
-    await batch.commit();
-  }
-
-  return { mode: 'firebase', persisted: rows.length };
 }
 
 function resolveExpectedApiKey() {
@@ -349,117 +262,6 @@ app.get('/api/catalog-source', (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
 });
-
-app.get('/api/online-customers-source', (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  res.json({
-    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
-    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
-    rowCount: onlineCustomersService.getCustomers().length,
-    sheetsScanned: onlineCustomersService.getScannedSheets(),
-    lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
-    error: onlineCustomersService.getLastSyncError(),
-  });
-});
-
-app.post('/api/online-customers-source', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  const nextUrl = String(req.body?.onlineCustomersSpreadsheetUrl || '').trim();
-  const nextSheetNames = Array.isArray(req.body?.onlineCustomersSheetNames) ? req.body.onlineCustomersSheetNames : [];
-  onlineCustomersService.setSpreadsheetUrl(nextUrl);
-  onlineCustomersService.setIncludedSheetNames(nextSheetNames);
-  await settingsStore.updateSettings({
-    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
-    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
-  });
-  const loaded = await onlineCustomersService.loadCustomers();
-  if (!loaded.success) return res.status(400).json(loaded);
-  const persistence = await persistOnlineCustomersSnapshot();
-  return res.json({ success: true, ...loaded, persistence });
-});
-
-app.post('/api/online-customers/refresh', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  const loaded = await onlineCustomersService.loadCustomers();
-  if (!loaded.success) return res.status(400).json(loaded);
-  const persistence = await persistOnlineCustomersSnapshot();
-  return res.json({ success: true, ...loaded, persistence });
-});
-
-app.get('/api/online-customers', async (req, res) => {
-  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
-  const { start, end } = parseDateRange(req.query || {});
-  const hasDateFilter = Boolean(String(req.query?.start || '').trim() || String(req.query?.end || '').trim());
-  let marketCustomers = [];
-
-  if (firestore) {
-    try {
-      const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
-      marketCustomers = snap.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((row) => isDashboardVisibleRequest(row))
-        .filter((row) => {
-          const at = requestTimestamp(row);
-          return Number.isFinite(at) ? at >= start && at <= end : true;
-        })
-        .map((row) => ({
-          customerName: String(row.senderId || 'Unknown').trim() || 'Unknown',
-          device: String(row.matchedDevice || row.aiDeviceMatch || '').trim() || '-',
-          timestamp: requestTimestamp(row),
-        }))
-        .filter((row) => row.device && row.device !== '-');
-    } catch (error) {
-      console.error('Failed to build market customer comparison:', error.message);
-    }
-  }
-
-  const onlineCustomers = filterRowsByDateRange(onlineCustomersService.getCustomers(), start, end, hasDateFilter);
-  const marketSet = new Set(marketCustomers.map((row) => `${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`));
-  const overlap = onlineCustomers
-    .filter((row) => marketSet.has(`${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`))
-    .slice(0, 200);
-  const onlineSummary = summarizeCustomers(onlineCustomers);
-  const marketSummary = summarizeCustomers(marketCustomers);
-  const comparisonByDevice = {};
-  Object.keys({ ...onlineSummary.byDevice, ...marketSummary.byDevice }).forEach((device) => {
-    comparisonByDevice[device] = {
-      online: Number(onlineSummary.byDevice[device] || 0),
-      market: Number(marketSummary.byDevice[device] || 0),
-    };
-  });
-
-  res.json({
-    onlineCustomers,
-    marketCustomers: marketCustomers.slice(0, 500),
-    overlap,
-    onlineSummary,
-    marketSummary,
-    overlapSummary: summarizeCustomers(overlap),
-    comparisonByDevice,
-  });
-});
-
-function scheduleOnlineCustomersAutoSync() {
-  if (onlineSyncTimer) return;
-  onlineSyncTimer = setInterval(async () => {
-    if (onlineSyncInProgress) return;
-    if (!onlineCustomersService.getSpreadsheetUrl()) return;
-    onlineSyncInProgress = true;
-    try {
-      const loaded = await onlineCustomersService.loadCustomers();
-      if (loaded.success) {
-        await persistOnlineCustomersSnapshot();
-        console.log(`♻️ Auto-synced online customers: ${loaded.rowCount} rows (${loaded.sheetCount} sheets).`);
-      } else {
-        console.error(`⚠️ Auto-sync failed for online customers: ${loaded.error}`);
-      }
-    } catch (error) {
-      console.error(`⚠️ Auto-sync crash for online customers: ${error.message}`);
-    } finally {
-      onlineSyncInProgress = false;
-    }
-  }, ONLINE_SYNC_INTERVAL_MS);
-}
 
 app.post('/api/catalog-source', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
@@ -879,8 +681,6 @@ app.get('*', (req, res) => {
     catalog.setHistoricalDevices(settings.historicalCatalogDevices || []);
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
-    onlineCustomersService.setSpreadsheetUrl(settings.onlineCustomersSpreadsheetUrl || '');
-    onlineCustomersService.setIncludedSheetNames(settings.onlineCustomersSheetNames || []);
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
       await persistCatalogHistory();
@@ -890,16 +690,6 @@ app.get('*', (req, res) => {
     } else {
       console.error(`❌ Catalog failed to load: ${loaded.error}`);
     }
-    if (onlineCustomersService.getSpreadsheetUrl()) {
-      const onlineLoaded = await onlineCustomersService.loadCustomers();
-      if (onlineLoaded.success) {
-        await persistOnlineCustomersSnapshot();
-        console.log(`🛒 Online buyers loaded (${onlineLoaded.rowCount} rows across ${onlineLoaded.sheetCount} sheets).`);
-      } else {
-        console.error(`❌ Online buyers failed to load: ${onlineLoaded.error}`);
-      }
-    }
-    scheduleOnlineCustomersAutoSync();
   } catch (e) { console.error('Error during init:', e.message); }
 })();
 
