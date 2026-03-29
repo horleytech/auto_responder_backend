@@ -19,6 +19,29 @@ npm install
 npm start
 ```
 
+## Production Deploy (after PR merge)
+
+If GitHub shows **"This branch has not been deployed"**, that means merge happened but deployment did **not** run yet.
+
+On the server, deploy manually:
+
+```bash
+cd /root/auto_responder_backend
+git pull origin main
+npm install
+npm run build
+pm2 restart auto-responder --update-env
+```
+
+Then verify the running backend/frontend version:
+
+```bash
+curl -s https://autoresponder.horleytech.com/api/version
+curl -s https://autoresponder.horleytech.com/healthz
+```
+
+`/api/version` returns `buildTag` and currently served frontend bundle hashes so you can confirm the updated build is live.
+
 Dashboard: `http://localhost:3000/`
 
 ## Environment Variables

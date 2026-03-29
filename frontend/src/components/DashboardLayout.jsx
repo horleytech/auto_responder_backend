@@ -1,8 +1,10 @@
 import { House, Moon, Sun } from 'lucide-react';
+const UI_BUILD_TAG = 'online-customers-v3';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'requests', label: 'Requests' },
+  { id: 'requests', label: 'Market' },
+  { id: 'online-customers', label: 'Online Customers' },
   { id: 'dictionary', label: 'Dictionary' },
   { id: 'bot-logic', label: 'Bot Logic' },
   { id: 'settings', label: 'Settings' },
@@ -24,6 +26,14 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
           >
             <House size={16} /> Home Hub
           </a>
+
+          <button
+            type="button"
+            onClick={() => onPageChange('online-customers')}
+            className="mb-3 w-full rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white"
+          >
+            Open Online Customers
+          </button>
 
           <nav className="space-y-2">
             {navItems.map((item) => (
@@ -47,6 +57,7 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
           >
             {darkMode ? <Sun size={16} /> : <Moon size={16} />} {darkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
+          <p className="mt-3 text-center text-[11px] text-slate-500 dark:text-slate-400">UI build: {UI_BUILD_TAG}</p>
         </aside>
         <main className="flex-1">{children}</main>
       </div>
