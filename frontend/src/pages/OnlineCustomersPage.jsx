@@ -124,8 +124,20 @@ export default function OnlineCustomersPage({ dateRange }) {
           title={`Online Customers (${onlineCustomers.length})`}
           rows={onlineCustomers.slice(0, 200)}
           emptyLabel={isLoading ? 'Loading online customers...' : 'No online customers loaded yet.'}
-          extraColumns={(row) => <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.sheet || '-'}</td>}
-          extraHeader={<th className="px-2 py-2">Sheet</th>}
+          extraColumns={(row) => (
+            <>
+              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.timestamp ? new Date(row.timestamp).toLocaleString() : row.rawTimestamp || '-'}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.customerPhone || '-'}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.sheet || '-'}</td>
+            </>
+          )}
+          extraHeader={(
+            <>
+              <th className="px-2 py-2">Timestamp</th>
+              <th className="px-2 py-2">Phone</th>
+              <th className="px-2 py-2">Sheet</th>
+            </>
+          )}
         />
         <SimpleTable
           title={`Market Customers (${marketCustomers.length})`}
@@ -146,7 +158,9 @@ export default function OnlineCustomersPage({ dateRange }) {
           {source.sheetsScanned?.map((sheet) => (
             <div key={`${sheet.gid}-${sheet.title}`} className="rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
               <p className="font-medium">{sheet.title}</p>
+              <p className="text-slate-500">Timestamp: {sheet.matchedTimestampColumn || 'Not found'}</p>
               <p className="text-slate-500">Buyer Column: {sheet.matchedBuyerColumn || 'Not found'} | Device Column: {sheet.matchedDeviceColumn || 'Not found'}</p>
+              <p className="text-slate-500">Customer Phone: {sheet.matchedCustomerPhoneColumn || 'Not found'}</p>
             </div>
           ))}
           {!source.sheetsScanned?.length && <p className="text-slate-500">No sheet metadata yet.</p>}

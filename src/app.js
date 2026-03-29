@@ -57,6 +57,9 @@ const REQUEST_STATUSES = {
   NO_MATCH: 'no_match',
 };
 const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_STATUSES.MATCHED_NO_REPLY]);
+const ONLINE_SYNC_INTERVAL_MS = 8 * 60 * 60 * 1000;
+let onlineSyncTimer = null;
+let onlineSyncInProgress = false;
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -160,6 +163,14 @@ function summarizeCustomers(rows = []) {
   };
 }
 
+function filterRowsByDateRange(rows = [], start, end, requireTimestamp = false) {
+  return rows.filter((row) => {
+    const at = Number(row.timestamp);
+    if (!Number.isFinite(at)) return !requireTimestamp;
+    return at >= start && at <= end;
+  });
+}
+
 async function persistOnlineCustomersSnapshot() {
   if (!firestore) return { mode: 'memory', persisted: 0 };
   const rows = onlineCustomersService.getCustomers();
@@ -192,6 +203,7 @@ async function persistOnlineCustomersSnapshot() {
       batch.set(ref, {
         ...row,
         normalizedKey: `${String(row.customerName || '').toLowerCase()}::${String(row.device || '').toLowerCase()}`,
+        dateKey: row.dateKey || '',
         syncedAt: onlineCustomersService.getLastSyncedAt() || Date.now(),
       });
     });
@@ -370,6 +382,7 @@ app.post('/api/online-customers/refresh', async (req, res) => {
 app.get('/api/online-customers', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const { start, end } = parseDateRange(req.query || {});
+  const hasDateFilter = Boolean(String(req.query?.start || '').trim() || String(req.query?.end || '').trim());
   let marketCustomers = [];
 
   if (firestore) {
@@ -393,7 +406,7 @@ app.get('/api/online-customers', async (req, res) => {
     }
   }
 
-  const onlineCustomers = onlineCustomersService.getCustomers();
+  const onlineCustomers = filterRowsByDateRange(onlineCustomersService.getCustomers(), start, end, hasDateFilter);
   const marketSet = new Set(marketCustomers.map((row) => `${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`));
   const overlap = onlineCustomers
     .filter((row) => marketSet.has(`${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`))
@@ -418,6 +431,28 @@ app.get('/api/online-customers', async (req, res) => {
     comparisonByDevice,
   });
 });
+
+function scheduleOnlineCustomersAutoSync() {
+  if (onlineSyncTimer) return;
+  onlineSyncTimer = setInterval(async () => {
+    if (onlineSyncInProgress) return;
+    if (!onlineCustomersService.getSpreadsheetUrl()) return;
+    onlineSyncInProgress = true;
+    try {
+      const loaded = await onlineCustomersService.loadCustomers();
+      if (loaded.success) {
+        await persistOnlineCustomersSnapshot();
+        console.log(`♻️ Auto-synced online customers: ${loaded.rowCount} rows (${loaded.sheetCount} sheets).`);
+      } else {
+        console.error(`⚠️ Auto-sync failed for online customers: ${loaded.error}`);
+      }
+    } catch (error) {
+      console.error(`⚠️ Auto-sync crash for online customers: ${error.message}`);
+    } finally {
+      onlineSyncInProgress = false;
+    }
+  }, ONLINE_SYNC_INTERVAL_MS);
+}
 
 app.post('/api/catalog-source', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
@@ -856,6 +891,7 @@ app.get('*', (req, res) => {
         console.error(`❌ Online buyers failed to load: ${onlineLoaded.error}`);
       }
     }
+    scheduleOnlineCustomersAutoSync();
   } catch (e) { console.error('Error during init:', e.message); }
 })();
 
