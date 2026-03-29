@@ -2,7 +2,8 @@ import { House, Moon, Sun } from 'lucide-react';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'requests', label: 'Requests' },
+  { id: 'requests', label: 'Market' },
+  { id: 'online-customers', label: 'Online Customers' },
   { id: 'dictionary', label: 'Dictionary' },
   { id: 'bot-logic', label: 'Bot Logic' },
   { id: 'settings', label: 'Settings' },

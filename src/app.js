@@ -8,6 +8,7 @@ const {
 const { firestore, FieldValue } = require('./services/firebaseService');
 const { createCatalogService } = require('./services/catalogService');
 const { createProviderService } = require('./services/providerService');
+const { createOnlineCustomersService } = require('./services/onlineCustomersService');
 const settingsStore = require('./services/settingsStore');
 const { createProcessor } = require('./services/processor');
 const { createMaintenanceRouter } = require('./controllers/maintenance');
@@ -44,6 +45,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 const catalog = createCatalogService(GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL);
 const providerService = createProviderService();
+const onlineCustomersService = createOnlineCustomersService();
 const processor = createProcessor({ firestore, catalog, providerService, settingsStore, FieldValue });
 let responseIndex = 0;
 let runtimeApiKey = process.env.API_KEY || API_KEY;
@@ -261,6 +263,78 @@ app.post('/api/settings', async (req, res) => {
 app.get('/api/catalog-source', (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   res.json({ inventoryCsvUrl: catalog.getInventoryCsvUrl(), arrangementCsvUrl: catalog.getArrangementCsvUrl() });
+});
+
+app.get('/api/online-customers-source', (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  res.json({
+    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
+    rowCount: onlineCustomersService.getCustomers().length,
+    sheetsScanned: onlineCustomersService.getScannedSheets(),
+    lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
+    error: onlineCustomersService.getLastSyncError(),
+  });
+});
+
+app.post('/api/online-customers-source', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const nextUrl = String(req.body?.onlineCustomersSpreadsheetUrl || '').trim();
+  onlineCustomersService.setSpreadsheetUrl(nextUrl);
+  await settingsStore.updateSettings({ onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl() });
+  const loaded = await onlineCustomersService.loadCustomers();
+  if (!loaded.success) return res.status(400).json(loaded);
+  return res.json({ success: true, ...loaded });
+});
+
+app.post('/api/online-customers/refresh', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const loaded = await onlineCustomersService.loadCustomers();
+  if (!loaded.success) return res.status(400).json(loaded);
+  return res.json({ success: true, ...loaded });
+});
+
+app.get('/api/online-customers', async (req, res) => {
+  if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const { start, end } = parseDateRange(req.query || {});
+  let marketCustomers = [];
+
+  if (firestore) {
+    try {
+      const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
+      marketCustomers = snap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((row) => isDashboardVisibleRequest(row))
+        .filter((row) => {
+          const at = requestTimestamp(row);
+          return Number.isFinite(at) ? at >= start && at <= end : true;
+        })
+        .map((row) => ({
+          customerName: String(row.senderId || 'Unknown').trim() || 'Unknown',
+          device: String(row.matchedDevice || row.aiDeviceMatch || '').trim() || '-',
+          timestamp: requestTimestamp(row),
+        }))
+        .filter((row) => row.device && row.device !== '-');
+    } catch (error) {
+      console.error('Failed to build market customer comparison:', error.message);
+    }
+  }
+
+  const onlineCustomers = onlineCustomersService.getCustomers();
+  const marketSet = new Set(marketCustomers.map((row) => `${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`));
+  const overlap = onlineCustomers
+    .filter((row) => marketSet.has(`${row.customerName.toLowerCase()}::${row.device.toLowerCase()}`))
+    .slice(0, 200);
+
+  res.json({
+    onlineCustomers,
+    marketCustomers: marketCustomers.slice(0, 500),
+    overlap,
+    onlineSummary: {
+      totalRows: onlineCustomers.length,
+      uniqueCustomers: new Set(onlineCustomers.map((row) => row.customerName.toLowerCase())).size,
+      uniqueDevices: new Set(onlineCustomers.map((row) => row.device.toLowerCase())).size,
+    },
+  });
 });
 
 app.post('/api/catalog-source', async (req, res) => {
@@ -681,6 +755,7 @@ app.get('*', (req, res) => {
     catalog.setHistoricalDevices(settings.historicalCatalogDevices || []);
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
+    onlineCustomersService.setSpreadsheetUrl(settings.onlineCustomersSpreadsheetUrl || '');
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
       await persistCatalogHistory();
@@ -689,6 +764,14 @@ app.get('*', (req, res) => {
       );
     } else {
       console.error(`❌ Catalog failed to load: ${loaded.error}`);
+    }
+    if (onlineCustomersService.getSpreadsheetUrl()) {
+      const onlineLoaded = await onlineCustomersService.loadCustomers();
+      if (onlineLoaded.success) {
+        console.log(`🛒 Online buyers loaded (${onlineLoaded.rowCount} rows across ${onlineLoaded.sheetCount} sheets).`);
+      } else {
+        console.error(`❌ Online buyers failed to load: ${onlineLoaded.error}`);
+      }
     }
   } catch (e) { console.error('Error during init:', e.message); }
 })();
