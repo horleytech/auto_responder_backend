@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const {
   API_KEY, DASHBOARD_PASSWORD, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL, CORS_ALLOWED_ORIGINS,
 } = require('./config/env');
@@ -753,7 +754,18 @@ app.post('/api/catalog-refresh', async (req, res) => {
 });
 
 app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized, catalog }));
-app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
+app.get('/api/version', (req, res) => res.json({
+  buildTag: BUILD_TAG,
+  processStartedAt: PROCESS_STARTED_AT,
+  nodeVersion: process.version,
+  frontendBundle: getFrontendBundleRef(),
+}));
+app.get('/healthz', (req, res) => res.json({
+  ok: true,
+  persistence: firestore ? 'firebase' : 'memory',
+  buildTag: BUILD_TAG,
+  processStartedAt: PROCESS_STARTED_AT,
+}));
 
 // ─── THE WEBHOOK (UNCHANGED) ──────────────────────────────────────────────
 app.post('/api/respond', async (req, res) => {
