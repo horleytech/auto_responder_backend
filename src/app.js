@@ -66,6 +66,8 @@ const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_ST
 const ONLINE_SYNC_INTERVAL_MS = 8 * 60 * 60 * 1000;
 let onlineSyncTimer = null;
 let onlineSyncInProgress = false;
+const BUILD_TAG = 'online-customers-v3';
+const PROCESS_STARTED_AT = new Date().toISOString();
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -753,7 +755,17 @@ app.post('/api/catalog-refresh', async (req, res) => {
 });
 
 app.use('/api/maintenance', createMaintenanceRouter({ firestore, processor, settingsStore, isDashboardAuthorized, catalog }));
-app.get('/healthz', (req, res) => res.json({ ok: true, persistence: firestore ? 'firebase' : 'memory' }));
+app.get('/api/version', (req, res) => res.json({
+  buildTag: BUILD_TAG,
+  processStartedAt: PROCESS_STARTED_AT,
+  nodeVersion: process.version,
+}));
+app.get('/healthz', (req, res) => res.json({
+  ok: true,
+  persistence: firestore ? 'firebase' : 'memory',
+  buildTag: BUILD_TAG,
+  processStartedAt: PROCESS_STARTED_AT,
+}));
 
 // ─── THE WEBHOOK (UNCHANGED) ──────────────────────────────────────────────
 app.post('/api/respond', async (req, res) => {

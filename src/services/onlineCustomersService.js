@@ -1,5 +1,18 @@
 const axios = require('axios');
-const XLSX = require('xlsx');
+let xlsxModule = null;
+
+function getXlsxModule() {
+  if (xlsxModule) return xlsxModule;
+  try {
+    // Optional dependency on some deployments.
+    // If unavailable, we gracefully fallback to CSV-only mode.
+    // eslint-disable-next-line global-require
+    xlsxModule = require('xlsx');
+    return xlsxModule;
+  } catch {
+    return null;
+  }
+}
 
 function normalizeSpreadsheetUrl(url) {
   const raw = String(url || '').trim();
@@ -30,6 +43,57 @@ function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function parseCsv(text) {
+  const input = String(text ?? '');
+  const rows = [];
+  let currentRow = [];
+  let currentCell = '';
+  let insideQuotedField = false;
+  let atCellStart = true;
+
+  const pushCell = () => {
+    currentRow.push(currentCell.trim());
+    currentCell = '';
+    atCellStart = true;
+  };
+
+  const pushRow = () => {
+    if (currentRow.some((cell) => cell !== '')) rows.push(currentRow);
+    currentRow = [];
+  };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    const nextChar = input[i + 1];
+    if (char === '"') {
+      if (insideQuotedField) {
+        if (nextChar === '"') {
+          currentCell += '"';
+          i += 1;
+        } else insideQuotedField = false;
+      } else if (atCellStart) insideQuotedField = true;
+      else currentCell += char;
+      continue;
+    }
+    if (char === ',' && !insideQuotedField) {
+      pushCell();
+      continue;
+    }
+    if ((char === '\n' || char === '\r') && !insideQuotedField) {
+      if (char === '\r' && nextChar === '\n') i += 1;
+      pushCell();
+      pushRow();
+      continue;
+    }
+    currentCell += char;
+    atCellStart = false;
+  }
+
+  if (currentCell !== '' || currentRow.length > 0) pushCell();
+  pushRow();
+  return rows;
+}
+
 function parseTimestampValue(value) {
   const raw = normalizeText(value);
   if (!raw) return { timestamp: null, dateKey: '', rawTimestamp: '' };
@@ -51,8 +115,8 @@ function parseTimestampValue(value) {
   return { timestamp: null, dateKey: '', rawTimestamp: raw };
 }
 
-function worksheetRows(sheet) {
-  return XLSX.utils.sheet_to_json(sheet, {
+function worksheetRows(xlsxLib, sheet) {
+  return xlsxLib.utils.sheet_to_json(sheet, {
     header: 1,
     blankrows: false,
     raw: false,
@@ -73,19 +137,28 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
     if (!spreadsheetId) return { success: false, error: 'Online spreadsheet URL is not configured.' };
 
     try {
-      const xlsxUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
-      const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer' });
-      const workbook = XLSX.read(response.data, { type: 'buffer' });
+      const xlsxLib = getXlsxModule();
       const buyers = [];
       const nextScannedSheets = [];
+      const sources = [];
 
-      const selectedSheetNames = includedSheetNames.length
-        ? workbook.SheetNames.filter((name) => includedSheetNames.includes(String(name || '').toLowerCase()))
-        : workbook.SheetNames;
+      if (xlsxLib) {
+        const xlsxUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
+        const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer' });
+        const workbook = xlsxLib.read(response.data, { type: 'buffer' });
+        const selectedSheetNames = includedSheetNames.length
+          ? workbook.SheetNames.filter((name) => includedSheetNames.includes(String(name || '').toLowerCase()))
+          : workbook.SheetNames;
+        selectedSheetNames.forEach((sheetName) => {
+          sources.push({ sheetName, rows: worksheetRows(xlsxLib, workbook.Sheets[sheetName]) });
+        });
+      } else {
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
+        const response = await axios.get(csvUrl);
+        sources.push({ sheetName: 'PrimarySheet', rows: parseCsv(response.data) });
+      }
 
-      selectedSheetNames.forEach((sheetName) => {
-        const worksheet = workbook.Sheets[sheetName];
-        const rows = worksheetRows(worksheet);
+      sources.forEach(({ sheetName, rows }) => {
         if (!rows.length) {
           nextScannedSheets.push({ title: sheetName, gid: '', headers: [], matchedBuyerColumn: '', matchedDeviceColumn: '' });
           return;
