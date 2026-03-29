@@ -1,12 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchJsonSafe } from '../lib/api';
 
-export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState }) {
+export default function SettingsPage({ providerState, setProviderState, catalogState, setCatalogState, onNavigate }) {
   const [status, setStatus] = useState('');
   const [showNukeModal, setShowNukeModal] = useState(false);
   const [showClearLogsModal, setShowClearLogsModal] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [clearConfirmText, setClearConfirmText] = useState('');
+  const [onlineSource, setOnlineSource] = useState({ onlineCustomersSpreadsheetUrl: '', onlineCustomersSheetNamesText: '' });
+
+  useEffect(() => {
+    (async () => {
+      const { response, data } = await fetchJsonSafe('/api/online-customers-source');
+      if (!response.ok) return;
+      setOnlineSource({
+        onlineCustomersSpreadsheetUrl: data.onlineCustomersSpreadsheetUrl || '',
+        onlineCustomersSheetNamesText: Array.isArray(data.onlineCustomersSheetNames) ? data.onlineCustomersSheetNames.join(', ') : '',
+      });
+    })();
+  }, []);
 
   async function saveProvider() {
     const { response, data } = await fetchJsonSafe('/api/providers', {
@@ -25,6 +37,20 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
     if (response.ok) return setStatus('Catalog sources updated.');
     if (response.status === 403) return setStatus('Catalog save failed (403). Your admin session expired — log in again.');
     return setStatus(`Catalog save failed (${response.status})`);
+  }
+
+  async function saveOnlineSource() {
+    const payload = {
+      onlineCustomersSpreadsheetUrl: onlineSource.onlineCustomersSpreadsheetUrl,
+      onlineCustomersSheetNames: onlineSource.onlineCustomersSheetNamesText.split(',').map((item) => item.trim()).filter(Boolean),
+    };
+    const { response, data } = await fetchJsonSafe('/api/online-customers-source', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) return setStatus(`Online source saved (${data.rowCount || 0} rows synced).`);
+    if (response.status === 403) return setStatus('Online source save failed (403). Your admin session expired — log in again.');
+    return setStatus(`Online source save failed (${response.status}): ${data?.error || 'Unknown error'}`);
   }
 
   async function runMaintenance(path) {
@@ -81,6 +107,34 @@ export default function SettingsPage({ providerState, setProviderState, catalogS
           <div className="flex gap-3">
             <button type="button" onClick={saveProvider} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save Provider</button>
             <button type="button" onClick={saveCatalog} className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-white dark:bg-slate-700">Save Catalog Sources</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="mb-4 text-xl font-semibold">Online Customers Source</h2>
+        <div className="grid gap-4">
+          <label className="block space-y-2">
+            <span className="text-sm font-medium">Online Google Sheet URL</span>
+            <input
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+              value={onlineSource.onlineCustomersSpreadsheetUrl}
+              onChange={(e) => setOnlineSource((prev) => ({ ...prev, onlineCustomersSpreadsheetUrl: e.target.value }))}
+              placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+            />
+          </label>
+          <label className="block space-y-2">
+            <span className="text-sm font-medium">Sheet Tabs (optional)</span>
+            <input
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+              value={onlineSource.onlineCustomersSheetNamesText}
+              onChange={(e) => setOnlineSource((prev) => ({ ...prev, onlineCustomersSheetNamesText: e.target.value }))}
+              placeholder="Records (Responses), iPhones, Laptop"
+            />
+          </label>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={saveOnlineSource} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save & Sync Online Source</button>
+            <button type="button" onClick={() => onNavigate?.('online-customers')} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Open Online Customers Page</button>
           </div>
         </div>
       </div>
