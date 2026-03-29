@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const {
   API_KEY, DASHBOARD_PASSWORD, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL, CORS_ALLOWED_ORIGINS,
 } = require('./config/env');
@@ -68,6 +69,22 @@ let onlineSyncTimer = null;
 let onlineSyncInProgress = false;
 const BUILD_TAG = 'online-customers-v3';
 const PROCESS_STARTED_AT = new Date().toISOString();
+
+function getFrontendBundleRef() {
+  try {
+    const indexPath = path.join(__dirname, '../public/index.html');
+    const html = fs.readFileSync(indexPath, 'utf8');
+    const scriptMatch = html.match(/<script[^>]+src="([^"]+)"/i);
+    const cssMatch = html.match(/<link[^>]+href="([^"]+)"/i);
+    return {
+      indexPath,
+      scriptSrc: scriptMatch ? scriptMatch[1] : null,
+      cssHref: cssMatch ? cssMatch[1] : null,
+    };
+  } catch (error) {
+    return { indexPath: null, scriptSrc: null, cssHref: null, error: error.message };
+  }
+}
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -759,6 +776,7 @@ app.get('/api/version', (req, res) => res.json({
   buildTag: BUILD_TAG,
   processStartedAt: PROCESS_STARTED_AT,
   nodeVersion: process.version,
+  frontendBundle: getFrontendBundleRef(),
 }));
 app.get('/healthz', (req, res) => res.json({
   ok: true,
