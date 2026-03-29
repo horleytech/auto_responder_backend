@@ -60,7 +60,7 @@ export default function RequestsPage({ dateRange: externalDateRange, onDateRange
     <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold">Request Log</h2>
+          <h2 className="text-xl font-semibold">Market Log</h2>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Grouped by sender for faster review.</p>
         </div>
         <div className="flex flex-wrap gap-2">

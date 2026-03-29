@@ -4,6 +4,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import AutoCorrectPage from './pages/AutoCorrectPage';
 import BotLogicPage from './pages/BotLogicPage';
 import RequestsPage from './pages/RequestsPage';
+import OnlineCustomersPage from './pages/OnlineCustomersPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
 import { fetchJsonSafe, hasDashboardSession } from './lib/api';
@@ -83,6 +84,9 @@ export default function App() {
           senderFocus={requestSenderFocus}
           onSenderFocusConsumed={() => setRequestSenderFocus('')}
         />
+      )}
+      {activePage === 'online-customers' && (
+        <OnlineCustomersPage dateRange={sharedDateRange} />
       )}
       {activePage === 'dictionary' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
