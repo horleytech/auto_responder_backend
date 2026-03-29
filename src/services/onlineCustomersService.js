@@ -62,6 +62,7 @@ function worksheetRows(sheet) {
 
 function createOnlineCustomersService(initialSpreadsheetUrl = '') {
   let spreadsheetUrl = normalizeSpreadsheetUrl(initialSpreadsheetUrl);
+  let includedSheetNames = [];
   let lastSyncedAt = 0;
   let lastSyncError = '';
   let cachedCustomers = [];
@@ -78,7 +79,11 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
       const buyers = [];
       const nextScannedSheets = [];
 
-      workbook.SheetNames.forEach((sheetName) => {
+      const selectedSheetNames = includedSheetNames.length
+        ? workbook.SheetNames.filter((name) => includedSheetNames.includes(String(name || '').toLowerCase()))
+        : workbook.SheetNames;
+
+      selectedSheetNames.forEach((sheetName) => {
         const worksheet = workbook.Sheets[sheetName];
         const rows = worksheetRows(worksheet);
         if (!rows.length) {
@@ -166,6 +171,12 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
     getSpreadsheetUrl: () => spreadsheetUrl,
     setSpreadsheetUrl: (nextUrl) => {
       spreadsheetUrl = normalizeSpreadsheetUrl(nextUrl);
+    },
+    getIncludedSheetNames: () => includedSheetNames,
+    setIncludedSheetNames: (list = []) => {
+      includedSheetNames = Array.isArray(list)
+        ? list.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+        : [];
     },
     getCustomers: () => cachedCustomers,
     getScannedSheets: () => scannedSheets,

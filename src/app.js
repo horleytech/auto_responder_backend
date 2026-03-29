@@ -179,6 +179,7 @@ async function persistOnlineCustomersSnapshot() {
 
   await firestore.collection('ar_settings').doc('onlineCustomers').set({
     onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
+    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
     rowCount: rows.length,
     sheetCount: onlineCustomersService.getScannedSheets().length,
     lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
@@ -353,6 +354,7 @@ app.get('/api/online-customers-source', (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   res.json({
     onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
+    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
     rowCount: onlineCustomersService.getCustomers().length,
     sheetsScanned: onlineCustomersService.getScannedSheets(),
     lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
@@ -363,8 +365,13 @@ app.get('/api/online-customers-source', (req, res) => {
 app.post('/api/online-customers-source', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const nextUrl = String(req.body?.onlineCustomersSpreadsheetUrl || '').trim();
+  const nextSheetNames = Array.isArray(req.body?.onlineCustomersSheetNames) ? req.body.onlineCustomersSheetNames : [];
   onlineCustomersService.setSpreadsheetUrl(nextUrl);
-  await settingsStore.updateSettings({ onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl() });
+  onlineCustomersService.setIncludedSheetNames(nextSheetNames);
+  await settingsStore.updateSettings({
+    onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
+    onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
+  });
   const loaded = await onlineCustomersService.loadCustomers();
   if (!loaded.success) return res.status(400).json(loaded);
   const persistence = await persistOnlineCustomersSnapshot();
@@ -873,6 +880,7 @@ app.get('*', (req, res) => {
     catalog.setInventoryCsvUrl(settings.inventoryCsvUrl || GOOGLE_SHEETS_CSV_URL);
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     onlineCustomersService.setSpreadsheetUrl(settings.onlineCustomersSpreadsheetUrl || '');
+    onlineCustomersService.setIncludedSheetNames(settings.onlineCustomersSheetNames || []);
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
       await persistCatalogHistory();

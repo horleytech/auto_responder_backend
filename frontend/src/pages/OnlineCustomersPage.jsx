@@ -3,6 +3,7 @@ import { fetchJsonSafe } from '../lib/api';
 
 const initialState = {
   onlineCustomersSpreadsheetUrl: '',
+  onlineCustomersSheetNames: [],
   rowCount: 0,
   sheetsScanned: [],
   lastSyncedAt: 0,
@@ -17,11 +18,13 @@ export default function OnlineCustomersPage({ dateRange }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [sheetNamesInput, setSheetNamesInput] = useState('');
 
   async function loadSource() {
     const { response, data } = await fetchJsonSafe('/api/online-customers-source');
     if (!response.ok) return;
     setSource((prev) => ({ ...prev, ...data }));
+    setSheetNamesInput(Array.isArray(data.onlineCustomersSheetNames) ? data.onlineCustomersSheetNames.join(', ') : '');
   }
 
   async function loadCustomers() {
@@ -60,7 +63,10 @@ export default function OnlineCustomersPage({ dateRange }) {
     setMessage('');
     const { response, data } = await fetchJsonSafe('/api/online-customers-source', {
       method: 'POST',
-      body: JSON.stringify({ onlineCustomersSpreadsheetUrl: source.onlineCustomersSpreadsheetUrl }),
+      body: JSON.stringify({
+        onlineCustomersSpreadsheetUrl: source.onlineCustomersSpreadsheetUrl,
+        onlineCustomersSheetNames: sheetNamesInput.split(',').map((item) => item.trim()).filter(Boolean),
+      }),
     });
     if (response.ok) {
       setMessage(`Online buyers synced: ${data.rowCount || 0} row(s).`);
@@ -102,6 +108,13 @@ export default function OnlineCustomersPage({ dateRange }) {
             <button disabled={isSaving} type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isSaving ? 'Saving...' : 'Save & Sync'}</button>
             <button disabled={isSaving} type="button" onClick={refreshCustomers} className="rounded-xl border border-slate-300 px-4 py-2 text-sm dark:border-slate-700">Refresh</button>
           </div>
+          <label className="block text-sm font-medium pt-1">Sheet tabs to read (optional, comma-separated)</label>
+          <input
+            value={sheetNamesInput}
+            onChange={(event) => setSheetNamesInput(event.target.value)}
+            placeholder="Records (Responses), iPhones, Laptop"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
         </form>
 
         {message && <p className="mt-3 text-sm text-indigo-600 dark:text-indigo-300">{message}</p>}
