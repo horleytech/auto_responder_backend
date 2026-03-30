@@ -19,6 +19,48 @@ npm install
 npm start
 ```
 
+## Production Deploy (after PR merge)
+
+If GitHub shows **"This branch has not been deployed"**, that means merge happened but deployment did **not** run yet.
+
+On the server, deploy manually:
+
+```bash
+cd /root/auto_responder_backend
+git pull origin main
+npm install
+npm run build
+pm2 restart auto-responder --update-env
+```
+
+Then verify the running backend/frontend version:
+
+```bash
+curl -s https://autoresponder.horleytech.com/api/version
+curl -s https://autoresponder.horleytech.com/healthz
+```
+
+`/api/version` returns `buildTag` and currently served frontend bundle hashes so you can confirm the updated build is live.
+
+## Troubleshooting: Vercel status vs PM2 server
+
+If GitHub shows:
+- **"This branch has not been deployed"**
+- **"Vercel — Deployment rate limited"**
+- **"Checks awaiting conflict resolution"**
+
+that does **not** automatically mean your PM2 server failed. It usually means the Vercel integration did not deploy that PR branch.
+
+Use this rule:
+- If you serve the app from your VPS + PM2, follow the manual deploy commands above and ignore Vercel branch status.
+- If you serve the app from Vercel, wait for rate-limit window / resolve conflicts, then redeploy from `main`.
+
+To confirm what your live PM2 app serves, compare:
+1. `curl -s https://autoresponder.horleytech.com/api/version`
+2. `cat /root/auto_responder_backend/public/index.html`
+
+If `api/version.frontendBundle.scriptSrc` and `public/index.html` match your latest hash, PM2 is updated even if Vercel PR checks are red.
+
 Dashboard: `http://localhost:3000/`
 
 ## Environment Variables
