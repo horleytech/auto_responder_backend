@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
-const fs = require('fs');
 const {
   API_KEY, DASHBOARD_PASSWORD, OPENAI_API_KEY, QWEN_API_KEY, GOOGLE_SHEETS_CSV_URL, ARRANGEMENT_MAP_CSV_URL, CORS_ALLOWED_ORIGINS,
 } = require('./config/env');
@@ -67,6 +66,8 @@ const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_ST
 const ONLINE_SYNC_INTERVAL_MS = 8 * 60 * 60 * 1000;
 let onlineSyncTimer = null;
 let onlineSyncInProgress = false;
+const BUILD_TAG = 'online-customers-v3';
+const PROCESS_STARTED_AT = new Date().toISOString();
 
 function resolveSenderId(body = {}) {
   const candidates = [
@@ -758,7 +759,6 @@ app.get('/api/version', (req, res) => res.json({
   buildTag: BUILD_TAG,
   processStartedAt: PROCESS_STARTED_AT,
   nodeVersion: process.version,
-  frontendBundle: getFrontendBundleRef(),
 }));
 app.get('/healthz', (req, res) => res.json({
   ok: true,
