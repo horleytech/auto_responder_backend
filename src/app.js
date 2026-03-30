@@ -67,24 +67,6 @@ const PERSISTED_REQUEST_STATUSES = new Set([REQUEST_STATUSES.REPLIED, REQUEST_ST
 const ONLINE_SYNC_INTERVAL_MS = 8 * 60 * 60 * 1000;
 let onlineSyncTimer = null;
 let onlineSyncInProgress = false;
-const BUILD_TAG = 'online-customers-v3';
-const PROCESS_STARTED_AT = new Date().toISOString();
-
-function getFrontendBundleRef() {
-  try {
-    const indexPath = path.join(__dirname, '../public/index.html');
-    const html = fs.readFileSync(indexPath, 'utf8');
-    const scriptMatch = html.match(/<script[^>]+src="([^"]+)"/i);
-    const cssMatch = html.match(/<link[^>]+href="([^"]+)"/i);
-    return {
-      indexPath,
-      scriptSrc: scriptMatch ? scriptMatch[1] : null,
-      cssHref: cssMatch ? cssMatch[1] : null,
-    };
-  } catch (error) {
-    return { indexPath: null, scriptSrc: null, cssHref: null, error: error.message };
-  }
-}
 
 function resolveSenderId(body = {}) {
   const candidates = [
