@@ -13,8 +13,6 @@ const initialState = {
 export default function OnlineCustomersPage({ dateRange }) {
   const [source, setSource] = useState(initialState);
   const [onlineCustomers, setOnlineCustomers] = useState([]);
-  const [marketCustomers, setMarketCustomers] = useState([]);
-  const [overlap, setOverlap] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -36,8 +34,6 @@ export default function OnlineCustomersPage({ dateRange }) {
     const { response, data } = await fetchJsonSafe(`/api/online-customers?${params.toString()}`);
     if (response.ok) {
       setOnlineCustomers(Array.isArray(data.onlineCustomers) ? data.onlineCustomers : []);
-      setMarketCustomers(Array.isArray(data.marketCustomers) ? data.marketCustomers : []);
-      setOverlap(Array.isArray(data.overlap) ? data.overlap : []);
     } else {
       setMessage(data?.error || 'Failed to load online customers.');
     }
@@ -52,10 +48,10 @@ export default function OnlineCustomersPage({ dateRange }) {
     loadCustomers();
   }, [dateRange?.start, dateRange?.end]);
 
-  const overlapCountLabel = useMemo(() => {
-    const pct = onlineCustomers.length ? ((overlap.length / onlineCustomers.length) * 100).toFixed(1) : '0.0';
-    return `${overlap.length} (${pct}% of online)`;
-  }, [overlap.length, onlineCustomers.length]);
+  const recordsWithTimestamp = useMemo(
+    () => onlineCustomers.filter((row) => Number.isFinite(Number(row.timestamp))).length,
+    [onlineCustomers]
+  );
 
   async function saveSource(event) {
     event.preventDefault();
@@ -69,7 +65,7 @@ export default function OnlineCustomersPage({ dateRange }) {
       }),
     });
     if (response.ok) {
-      setMessage(`Online buyers synced: ${data.rowCount || 0} row(s).`);
+      setMessage(`Records synced: ${data.rowCount || 0} row(s).`);
       await Promise.all([loadSource(), loadCustomers()]);
     } else {
       setMessage(data?.error || 'Failed to save spreadsheet URL.');
@@ -82,7 +78,7 @@ export default function OnlineCustomersPage({ dateRange }) {
     setMessage('');
     const { response, data } = await fetchJsonSafe('/api/online-customers/refresh', { method: 'POST', body: '{}' });
     if (response.ok) {
-      setMessage(`Online buyers refreshed: ${data.rowCount || 0} row(s).`);
+      setMessage(`Records refreshed: ${data.rowCount || 0} row(s).`);
       await Promise.all([loadSource(), loadCustomers()]);
     } else {
       setMessage(data?.error || 'Failed to refresh online buyers.');
@@ -93,8 +89,8 @@ export default function OnlineCustomersPage({ dateRange }) {
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="text-xl font-semibold">Online Customers</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Read all sheet tabs, detect buyer + device columns, and compare with Market requests.</p>
+        <h2 className="text-xl font-semibold">Records</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Read all sheet tabs and normalize customer/device records from your CSV source.</p>
 
         <form className="mt-4 space-y-3" onSubmit={saveSource}>
           <label className="block text-sm font-medium">Google Sheet URL</label>
@@ -122,9 +118,9 @@ export default function OnlineCustomersPage({ dateRange }) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Online Rows" value={onlineCustomers.length} />
-        <SummaryCard label="Market Matches" value={marketCustomers.length} />
-        <SummaryCard label="Overlap (same customer + device)" value={overlapCountLabel} />
+        <SummaryCard label="Total Records" value={onlineCustomers.length} />
+        <SummaryCard label="Records With Timestamp" value={recordsWithTimestamp} />
+        <SummaryCard label="Records Missing Timestamp" value={Math.max(onlineCustomers.length - recordsWithTimestamp, 0)} />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
@@ -132,37 +128,24 @@ export default function OnlineCustomersPage({ dateRange }) {
         <p>Last synced: <strong>{source.lastSyncedAt ? new Date(source.lastSyncedAt).toLocaleString() : 'Not synced yet'}</strong></p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <SimpleTable
-          title={`Online Customers (${onlineCustomers.length})`}
-          rows={onlineCustomers.slice(0, 200)}
-          emptyLabel={isLoading ? 'Loading online customers...' : 'No online customers loaded yet.'}
-          extraColumns={(row) => (
-            <>
-              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.timestamp ? new Date(row.timestamp).toLocaleString() : row.rawTimestamp || '-'}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.customerPhone || '-'}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.sheet || '-'}</td>
-            </>
-          )}
-          extraHeader={(
-            <>
-              <th className="px-2 py-2">Timestamp</th>
-              <th className="px-2 py-2">Phone</th>
-              <th className="px-2 py-2">Sheet</th>
-            </>
-          )}
-        />
-        <SimpleTable
-          title={`Market Customers (${marketCustomers.length})`}
-          rows={marketCustomers.slice(0, 200)}
-          emptyLabel={isLoading ? 'Loading market customers...' : 'No market customers in this date range.'}
-        />
-      </div>
-
       <SimpleTable
-        title={`Overlap Customers (${overlap.length})`}
-        rows={overlap.slice(0, 200)}
-        emptyLabel={isLoading ? 'Loading overlap...' : 'No overlap found yet.'}
+        title={`Records (${onlineCustomers.length})`}
+        rows={onlineCustomers.slice(0, 300)}
+        emptyLabel={isLoading ? 'Loading records...' : 'No records loaded yet.'}
+        extraColumns={(row) => (
+          <>
+            <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.timestamp ? new Date(row.timestamp).toLocaleString() : row.rawTimestamp || '-'}</td>
+            <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.customerPhone || '-'}</td>
+            <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.sheet || '-'}</td>
+          </>
+        )}
+        extraHeader={(
+          <>
+            <th className="px-2 py-2">Timestamp</th>
+            <th className="px-2 py-2">Phone</th>
+            <th className="px-2 py-2">Sheet</th>
+          </>
+        )}
       />
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">

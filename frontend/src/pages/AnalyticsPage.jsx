@@ -16,7 +16,7 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
   const setDateRange = onDateRangeChange || setInternalDateRange;
   const [data, setData] = useState({ devices: [], customers: [] });
   const [requestSummary, setRequestSummary] = useState({ total: 0, matchedTotal: 0, byStatus: {}, byHour: {}, byDevice: {}, bySender: {} });
-  const [comparison, setComparison] = useState({ onlineSummary: {}, marketSummary: {}, overlapSummary: {}, comparisonByDevice: {} });
+  const [recordsSummary, setRecordsSummary] = useState({ rowCount: 0, lastSyncedAt: 0 });
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -25,10 +25,10 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
       if (dateRange.start) params.set('start', dateRange.start);
       if (dateRange.end) params.set('end', dateRange.end);
 
-      const [analyticsResponse, requestsResponse, comparisonResponse] = await Promise.all([
+      const [analyticsResponse, requestsResponse, recordsSourceResponse] = await Promise.all([
         fetchJsonSafe(`/api/clean-analytics?${params.toString()}`),
         fetchJsonSafe(`/api/requests?${params.toString()}`),
-        fetchJsonSafe(`/api/online-customers?${params.toString()}`),
+        fetchJsonSafe('/api/online-customers-source'),
       ]);
 
       if (!analyticsResponse.response.ok) {
@@ -50,12 +50,10 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
           .slice(0, 5)
           .map(([senderId, totalRequests]) => ({ senderId, totalRequests }));
 
-      if (comparisonResponse.response.ok) {
-        setComparison({
-          onlineSummary: comparisonResponse.data?.onlineSummary || {},
-          marketSummary: comparisonResponse.data?.marketSummary || {},
-          overlapSummary: comparisonResponse.data?.overlapSummary || {},
-          comparisonByDevice: comparisonResponse.data?.comparisonByDevice || {},
+      if (recordsSourceResponse.response.ok) {
+        setRecordsSummary({
+          rowCount: Number(recordsSourceResponse.data?.rowCount || 0),
+          lastSyncedAt: Number(recordsSourceResponse.data?.lastSyncedAt || 0),
         });
       }
 
@@ -64,19 +62,10 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
       setRequestSummary(summary);
     })();
   }, [dateRange.start, dateRange.end]);
-
-  const deviceComparisonRows = useMemo(() => {
-    const entries = Object.entries(comparison.comparisonByDevice || {})
-      .map(([device, counts]) => ({
-        device,
-        online: Number(counts?.online || 0),
-        market: Number(counts?.market || 0),
-        total: Number(counts?.online || 0) + Number(counts?.market || 0),
-      }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 8);
-    return entries;
-  }, [comparison.comparisonByDevice]);
+  const recordsLastSyncedLabel = useMemo(() => {
+    if (!recordsSummary.lastSyncedAt) return 'Not synced';
+    return new Date(recordsSummary.lastSyncedAt).toLocaleString();
+  }, [recordsSummary.lastSyncedAt]);
 
   return (
     <section className="space-y-6">
@@ -106,30 +95,29 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <SummaryCard label="Online Customers" value={comparison.onlineSummary.totalRows || 0} />
-        <SummaryCard label="Market Customers" value={comparison.marketSummary.totalRows || 0} />
-        <SummaryCard label="Overlap Customers" value={comparison.overlapSummary.totalRows || 0} />
-        <SummaryCard label="Overlap Devices" value={comparison.overlapSummary.uniqueDevices || 0} />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <PieChartCard title="Online vs Market Volume" data={{ Online: comparison.onlineSummary.totalRows || 0, Market: comparison.marketSummary.totalRows || 0 }} />
-        <DualBarChart title="Top Device Comparison (Online vs Market)" rows={deviceComparisonRows} />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
+        <SummaryCard label="Records (CSV rows)" value={recordsSummary.rowCount || 0} />
+        <SummaryCard label="Total Requests" value={requestSummary.total} />
         <SummaryCard label="Matched Requests" value={requestSummary.matchedTotal} />
-        <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
         <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
+        <PieChartCard title="Request Status Distribution" data={requestSummary.byStatus} />
         <HourlyBarChart title="Matched Requests by Hour" data={requestSummary.byHour} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
+        <SummaryCard label="Records Last Sync" value={recordsLastSyncedLabel} />
+        <SummaryCard label="Replied Matches" value={requestSummary.byStatus.replied || 0} />
+        <SummaryCard label="Unmatched / Other Requests" value={Math.max(requestSummary.total - requestSummary.matchedTotal, 0)} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
         <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-1">
         <Leaderboard
           title="Top 5 Customers / Vendors"
           rows={data.customers.map((c) => ({ key: c.senderId || 'Unknown', count: c.totalRequests || 0 }))}
@@ -158,7 +146,7 @@ function SummaryCard({ label, value }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-2 text-3xl font-bold">{Number(value || 0)}</p>
+      <p className="mt-2 break-words text-3xl font-bold">{typeof value === 'number' ? Number(value || 0) : value}</p>
     </div>
   );
 }
@@ -242,34 +230,6 @@ function HourlyBarChart({ title, data }) {
               </div>
             );
           })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DualBarChart({ title, rows }) {
-  const max = rows.reduce((m, row) => Math.max(m, row.online, row.market), 0);
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-      <h3 className="mb-4 text-lg font-semibold">{title}</h3>
-      {!rows.length && <p className="text-sm text-slate-500">No comparison data yet.</p>}
-      {!!rows.length && (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            <div key={row.device}>
-              <p className="mb-1 text-xs text-slate-500">{row.device}</p>
-              <div className="mb-1 h-2 rounded bg-slate-200 dark:bg-slate-800">
-                <div className="h-2 rounded bg-indigo-500" style={{ width: `${max ? (row.online / max) * 100 : 0}%` }} />
-              </div>
-              <div className="h-2 rounded bg-slate-200 dark:bg-slate-800">
-                <div className="h-2 rounded bg-emerald-500" style={{ width: `${max ? (row.market / max) * 100 : 0}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-slate-500">Online: {row.online} | Market: {row.market}</p>
-            </div>
-          ))}
-          <p className="text-xs text-slate-500">Blue = Online, Green = Market</p>
         </div>
       )}
     </div>

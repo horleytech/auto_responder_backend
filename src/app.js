@@ -141,10 +141,7 @@ function resolveRequestStatus(row = {}) {
 
 function isDashboardVisibleRequest(row = {}) {
   const status = resolveRequestStatus(row);
-  if (PERSISTED_REQUEST_STATUSES.has(status)) return true;
-  if (row.replied === true) return true;
-  if (row.matchedDevice || row.aiDeviceMatch) return true;
-  return false;
+  return status !== REQUEST_STATUSES.BLOCKED_FORBIDDEN;
 }
 
 async function persistCatalogHistory() {
@@ -419,7 +416,7 @@ app.get('/api/online-customers', async (req, res) => {
 
   if (firestore) {
     try {
-      const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
+      const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(3000).get();
       marketCustomers = snap.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
         .filter((row) => isDashboardVisibleRequest(row))
@@ -582,7 +579,7 @@ app.get('/api/requests', async (req, res) => {
   };
 
   try {
-    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(150).get();
+    const snap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
     const rows = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const requests = rows.filter((row) => {
       if (!isDashboardVisibleRequest(row)) return false;
@@ -590,7 +587,7 @@ app.get('/api/requests', async (req, res) => {
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
     });
-    res.json({ requests: requests.slice(0, 50), summary: summarizeRequests(requests) });
+    res.json({ requests: requests.slice(0, 300), summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
@@ -646,7 +643,7 @@ app.get('/api/clean-analytics', async (req, res) => {
       }).slice(0, 5);
 
       if (!customers.length || !devices.length) {
-        const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(1200).get();
+        const rawSnap = await firestore.collection('ar_raw_requests').orderBy('timestamp', 'desc').limit(3000).get();
         const persisted = rawSnap.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
           .filter((row) => isDashboardVisibleRequest(row))

@@ -3,8 +3,8 @@ const UI_BUILD_TAG = 'online-customers-v3';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'requests', label: 'Market' },
-  { id: 'online-customers', label: 'Online Customers' },
+  { id: 'requests', label: 'Requests' },
+  { id: 'online-customers', label: 'Records' },
   { id: 'dictionary', label: 'Dictionary' },
   { id: 'bot-logic', label: 'Bot Logic' },
   { id: 'settings', label: 'Settings' },
@@ -26,14 +26,6 @@ export default function DashboardLayout({ activePage, onPageChange, darkMode, on
           >
             <House size={16} /> Home Hub
           </a>
-
-          <button
-            type="button"
-            onClick={() => onPageChange('online-customers')}
-            className="mb-3 w-full rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white"
-          >
-            Open Online Customers
-          </button>
 
           <nav className="space-y-2">
             {navItems.map((item) => (
