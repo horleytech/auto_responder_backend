@@ -17,16 +17,6 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-function offsetDateInputValue(daysAgo = 0) {
-  const date = new Date();
-  date.setDate(date.getDate() - Number(daysAgo || 0));
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => hasDashboardSession());
   const [activePage, setActivePage] = useState('dashboard');
@@ -34,9 +24,11 @@ export default function App() {
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
   const [requestSenderFocus, setRequestSenderFocus] = useState('');
+  const [requestDeviceFocus, setRequestDeviceFocus] = useState('');
+  const [recordsDateRange, setRecordsDateRange] = useState({ start: '', end: '' });
   const [sharedDateRange, setSharedDateRange] = useState(() => {
     const end = todayDateInputValue();
-    const start = offsetDateInputValue(30);
+    const start = end;
     return { start, end };
   });
 
@@ -85,6 +77,11 @@ export default function App() {
           dateRange={sharedDateRange}
           onDateRangeChange={setSharedDateRange}
           onCustomerSelect={(senderId) => { setRequestSenderFocus(senderId); setActivePage('requests'); }}
+          onDeviceSelect={(deviceName) => { setRequestDeviceFocus(deviceName); setActivePage('requests'); }}
+          onRecordsClick={() => {
+            setRecordsDateRange({ start: '', end: '' });
+            setActivePage('online-customers');
+          }}
         />
       )}
       {activePage === 'requests' && (
@@ -92,11 +89,13 @@ export default function App() {
           dateRange={sharedDateRange}
           onDateRangeChange={setSharedDateRange}
           senderFocus={requestSenderFocus}
+          deviceFocus={requestDeviceFocus}
           onSenderFocusConsumed={() => setRequestSenderFocus('')}
+          onDeviceFocusConsumed={() => setRequestDeviceFocus('')}
         />
       )}
       {activePage === 'online-customers' && (
-        <OnlineCustomersPage dateRange={sharedDateRange} />
+        <OnlineCustomersPage dateRange={recordsDateRange} onDateRangeChange={setRecordsDateRange} />
       )}
       {activePage === 'dictionary' && <AutoCorrectPage />}
       {activePage === 'bot-logic' && <BotLogicPage />}
