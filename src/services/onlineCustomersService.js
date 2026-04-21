@@ -204,6 +204,7 @@ function worksheetRows(xlsxLib, sheet) {
 function createOnlineCustomersService(initialSpreadsheetUrl = '') {
   let spreadsheetUrl = normalizeSpreadsheetUrl(initialSpreadsheetUrl);
   let includedSheetNames = [];
+  let excludedSheetNames = [];
   let lastSyncedAt = 0;
   let lastSyncError = '';
   let cachedCustomers = [];
@@ -226,7 +227,8 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
         const selectedSheetNames = includedSheetNames.length
           ? workbook.SheetNames.filter((name) => includedSheetNames.includes(String(name || '').toLowerCase()))
           : workbook.SheetNames;
-        selectedSheetNames.forEach((sheetName) => {
+        const filteredSheetNames = selectedSheetNames.filter((name) => !excludedSheetNames.includes(String(name || '').toLowerCase()));
+        filteredSheetNames.forEach((sheetName) => {
           sources.push({ sheetName, rows: worksheetRows(xlsxLib, workbook.Sheets[sheetName]) });
         });
       } else {
@@ -324,17 +326,7 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
         }
       });
 
-      const dedupe = new Map();
-      buyers.forEach((row) => {
-        const dateKey = String(row.dateKey || 'unknown-date').toLowerCase();
-        const customerKey = String(row.customerName || `unknown-customer-${row.id}`).toLowerCase();
-        const productKey = String(row.device || `unknown-device-${row.id}`).toLowerCase();
-        const phoneKey = String(row.customerPhone || `unknown-phone-${row.id}`).toLowerCase();
-        const key = `${dateKey}::${customerKey}::${productKey}::${phoneKey}`;
-        if (!dedupe.has(key)) dedupe.set(key, row);
-      });
-
-      cachedCustomers = Array.from(dedupe.values());
+      cachedCustomers = buyers;
       scannedSheets = nextScannedSheets;
       lastSyncError = '';
       lastSyncedAt = Date.now();
@@ -365,6 +357,12 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
     getIncludedSheetNames: () => includedSheetNames,
     setIncludedSheetNames: (list = []) => {
       includedSheetNames = Array.isArray(list)
+        ? list.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+    },
+    getExcludedSheetNames: () => excludedSheetNames,
+    setExcludedSheetNames: (list = []) => {
+      excludedSheetNames = Array.isArray(list)
         ? list.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
         : [];
     },
