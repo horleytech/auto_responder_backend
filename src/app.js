@@ -503,7 +503,6 @@ app.get('/api/bot-logic', async (req, res) => {
     forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
-    enablePriceReply: Boolean(settings.enablePriceReply),
   });
 });
 
@@ -513,7 +512,6 @@ app.post('/api/bot-logic', async (req, res) => {
     forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
-    enablePriceReply: Boolean(req.body?.enablePriceReply),
   };
   await settingsStore.updateSettings(next);
   if (firestore) {
@@ -811,6 +809,8 @@ app.post('/api/respond', async (req, res) => {
     let activeDynamicResponses = sanitizeStringArray(settings.dynamicResponses);
     if (!activeDynamicResponses.length) activeDynamicResponses = ["Available", "Available chief", "Available boss"];
     const enablePriceReply = Boolean(settings.enablePriceReply);
+    const enableLinkReply = Boolean(settings.enableLinkReply);
+    const generalProductLinkOverride = String(settings.generalProductLinkOverride || '').trim();
 
     const prompt = `You are a JSON-based entity extractor. Return JSON ONLY.
 Category: If message contains 'used', category is 'used'. Else 'new'.
@@ -858,6 +858,10 @@ RULES:
         if (enablePriceReply && resolvedProduct) {
           const preferredPrice = String(resolvedProduct.salePrice || resolvedProduct.regularPrice || '').trim();
           if (preferredPrice) finalResponse = `${finalResponse} - ${preferredPrice}`;
+        }
+        if (enableLinkReply) {
+          const preferredLink = generalProductLinkOverride || String(resolvedProduct?.link || '').trim();
+          if (preferredLink) finalResponse = `${finalResponse}\n${preferredLink}`;
         }
         responseIndex++;
         requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;

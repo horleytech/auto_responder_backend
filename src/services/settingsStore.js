@@ -11,6 +11,8 @@ function createSettingsStore(db) {
     forbiddenUsedPhrases: [],
     dynamicResponses: [],
     enablePriceReply: false,
+    enableLinkReply: false,
+    generalProductLinkOverride: '',
   };
 
   const docRef = db ? db.collection('ar_settings').doc('config') : null;
