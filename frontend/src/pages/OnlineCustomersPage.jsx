@@ -185,6 +185,11 @@ export default function OnlineCustomersPage({ dateRange: externalDateRange, onDa
             placeholder="Archive, Testing, Duplicate"
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button disabled={isSaving} type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+              {isSaving ? 'Saving...' : 'Save Exclusions & Sync'}
+            </button>
+          </div>
         </form>
 
         {message && <p className="mt-3 text-sm text-indigo-600 dark:text-indigo-300">{message}</p>}

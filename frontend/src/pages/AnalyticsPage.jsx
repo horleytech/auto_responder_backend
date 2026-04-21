@@ -66,6 +66,13 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
     if (!recordsSummary.lastSyncedAt) return 'Not synced';
     return new Date(recordsSummary.lastSyncedAt).toLocaleString();
   }, [recordsSummary.lastSyncedAt]);
+  const topRequestedDeviceRows = useMemo(
+    () => Object.entries(requestSummary.byDevice || {})
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, 10)
+      .map(([key, count]) => ({ key, count: Number(count) || 0 })),
+    [requestSummary.byDevice],
+  );
 
   return (
     <section className="space-y-6">
@@ -134,7 +141,7 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
         <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
         <Leaderboard
           title="Top 10 Most Requested Devices"
-          rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))}
+          rows={topRequestedDeviceRows}
           onRowClick={(row) => onDeviceSelect?.(row.key)}
         />
       </div>
