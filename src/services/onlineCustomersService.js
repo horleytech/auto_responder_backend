@@ -94,6 +94,28 @@ function resolveSheetHeaderRow(rows = []) {
   return best;
 }
 
+function inferBestColumnIndex(rows = [], startRow = 1, skipIndexes = new Set(), scorer = () => 0) {
+  const maxColumns = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
+  let bestIndex = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let col = 0; col < maxColumns; col += 1) {
+    if (skipIndexes.has(col)) continue;
+    let score = 0;
+    for (let rowIndex = startRow; rowIndex < rows.length; rowIndex += 1) {
+      const value = normalizeText(rows[rowIndex]?.[col]);
+      if (!value) continue;
+      score += scorer(value);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = col;
+    }
+  }
+
+  return bestIndex;
+}
+
 function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -222,9 +244,39 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
         const headerInfo = resolveSheetHeaderRow(rows);
         const headers = headerInfo.headers || [];
         const timestampIndex = headerInfo.timestampIndex;
-        const buyerIndex = headerInfo.buyerIndex;
-        const deviceIndex = headerInfo.deviceIndex;
-        const customerPhoneIndex = headerInfo.customerPhoneIndex;
+        let buyerIndex = headerInfo.buyerIndex;
+        let deviceIndex = headerInfo.deviceIndex;
+        let customerPhoneIndex = headerInfo.customerPhoneIndex;
+
+        const dataStartRow = headerInfo.rowIndex + 1;
+        const excluded = new Set([timestampIndex].filter((v) => v >= 0));
+        if (buyerIndex < 0) {
+          buyerIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            if (/^\d+$/.test(value)) return -1;
+            if (value.length < 3) return 0;
+            if (/[a-z]/i.test(value)) return 2;
+            return 0;
+          });
+        }
+        if (buyerIndex >= 0) excluded.add(buyerIndex);
+
+        if (deviceIndex < 0) {
+          deviceIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            if (value.length < 3) return 0;
+            if (/\b(gb|tb|iphone|samsung|tecno|infinix|hp|elitebook|macbook|ipad|pro|max|plus)\b/i.test(value)) return 4;
+            if (/[a-z]/i.test(value) && /\d/.test(value)) return 3;
+            if (/[a-z]/i.test(value)) return 1;
+            return 0;
+          });
+        }
+        if (deviceIndex >= 0) excluded.add(deviceIndex);
+
+        if (customerPhoneIndex < 0) {
+          customerPhoneIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            const digits = value.replace(/\D/g, '');
+            return digits.length >= 7 ? 2 : 0;
+          });
+        }
 
         nextScannedSheets.push({
           title: sheetName,
@@ -237,15 +289,13 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
           matchedCustomerPhoneColumn: customerPhoneIndex >= 0 ? headers[customerPhoneIndex] : '',
         });
 
-        if (buyerIndex < 0 || deviceIndex < 0) return;
-
         for (let i = headerInfo.rowIndex + 1; i < rows.length; i += 1) {
           const row = rows[i] || [];
-          const customerName = normalizeText(row[buyerIndex]);
-          const device = normalizeText(row[deviceIndex]);
+          const customerName = buyerIndex >= 0 ? normalizeText(row[buyerIndex]) : '';
+          const device = deviceIndex >= 0 ? normalizeText(row[deviceIndex]) : '';
           const customerPhone = customerPhoneIndex >= 0 ? normalizeText(row[customerPhoneIndex]) : '';
           const parsedTimestamp = timestampIndex >= 0 ? parseTimestampValue(row[timestampIndex]) : { timestamp: null, dateKey: '', rawTimestamp: '' };
-          if (!customerName || !device) continue;
+          if (!customerName && !device && !customerPhone) continue;
           const extraDetails = {};
           headers.forEach((header, headerIndex) => {
             if ([buyerIndex, deviceIndex, timestampIndex, customerPhoneIndex].includes(headerIndex)) return;
@@ -277,9 +327,9 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
       const dedupe = new Map();
       buyers.forEach((row) => {
         const dateKey = String(row.dateKey || 'unknown-date').toLowerCase();
-        const customerKey = String(row.customerName || '').toLowerCase();
-        const productKey = String(row.device || '').toLowerCase();
-        const phoneKey = String(row.customerPhone || '').toLowerCase();
+        const customerKey = String(row.customerName || `unknown-customer-${row.id}`).toLowerCase();
+        const productKey = String(row.device || `unknown-device-${row.id}`).toLowerCase();
+        const phoneKey = String(row.customerPhone || `unknown-phone-${row.id}`).toLowerCase();
         const key = `${dateKey}::${customerKey}::${productKey}::${phoneKey}`;
         if (!dedupe.has(key)) dedupe.set(key, row);
       });
