@@ -388,9 +388,14 @@ app.get('/api/online-customers-source', (req, res) => {
 
 app.post('/api/online-customers-source', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
+  const body = req.body || {};
   const nextUrl = String(req.body?.onlineCustomersSpreadsheetUrl || '').trim();
-  const nextSheetNames = Array.isArray(req.body?.onlineCustomersSheetNames) ? req.body.onlineCustomersSheetNames : [];
-  const nextExcludedSheetNames = Array.isArray(req.body?.onlineCustomersExcludedSheetNames) ? req.body.onlineCustomersExcludedSheetNames : [];
+  const nextSheetNames = Object.prototype.hasOwnProperty.call(body, 'onlineCustomersSheetNames')
+    ? (Array.isArray(body.onlineCustomersSheetNames) ? body.onlineCustomersSheetNames : [])
+    : onlineCustomersService.getIncludedSheetNames();
+  const nextExcludedSheetNames = Object.prototype.hasOwnProperty.call(body, 'onlineCustomersExcludedSheetNames')
+    ? (Array.isArray(body.onlineCustomersExcludedSheetNames) ? body.onlineCustomersExcludedSheetNames : [])
+    : onlineCustomersService.getExcludedSheetNames();
   onlineCustomersService.setSpreadsheetUrl(nextUrl);
   onlineCustomersService.setIncludedSheetNames(nextSheetNames);
   onlineCustomersService.setExcludedSheetNames(nextExcludedSheetNames);

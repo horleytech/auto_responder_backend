@@ -7,6 +7,7 @@ function createSettingsStore(db) {
     arrangementCsvUrl: null,
     onlineCustomersSpreadsheetUrl: null,
     onlineCustomersSheetNames: [],
+    onlineCustomersExcludedSheetNames: [],
     forbiddenNewPhrases: [],
     forbiddenUsedPhrases: [],
     dynamicResponses: [],
