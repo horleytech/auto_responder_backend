@@ -88,6 +88,20 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
               onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
             />
+            <button
+              type="button"
+              onClick={() => setDateRange({ start: today, end: today })}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateRange({ start: '', end: '' })}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+            >
+              All
+            </button>
           </div>
         </div>
       </div>

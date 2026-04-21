@@ -10,7 +10,19 @@ const initialState = {
   error: '',
 };
 
-export default function OnlineCustomersPage({ dateRange }) {
+function todayDateInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export default function OnlineCustomersPage({ dateRange: externalDateRange, onDateRangeChange }) {
+  const today = todayDateInputValue();
+  const [internalDateRange, setInternalDateRange] = useState({ start: '', end: '' });
+  const dateRange = externalDateRange || internalDateRange;
+  const setDateRange = onDateRangeChange || setInternalDateRange;
   const [source, setSource] = useState(initialState);
   const [onlineCustomers, setOnlineCustomers] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -30,8 +42,8 @@ export default function OnlineCustomersPage({ dateRange }) {
     setIsLoading(true);
     setMessage('');
     const params = new URLSearchParams();
-    if (dateRange?.start) params.set('start', dateRange.start);
-    if (dateRange?.end) params.set('end', dateRange.end);
+    if (dateRange.start) params.set('start', dateRange.start);
+    if (dateRange.end) params.set('end', dateRange.end);
     const { response, data } = await fetchJsonSafe(`/api/online-customers?${params.toString()}`);
     if (response.ok) {
       setOnlineCustomers(Array.isArray(data.onlineCustomers) ? data.onlineCustomers : []);
@@ -47,7 +59,7 @@ export default function OnlineCustomersPage({ dateRange }) {
 
   useEffect(() => {
     loadCustomers();
-  }, [dateRange?.start, dateRange?.end]);
+  }, [dateRange.start, dateRange.end]);
 
   const availableSheets = useMemo(
     () => Array.from(new Set(onlineCustomers.map((row) => row.sheet).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
@@ -115,6 +127,34 @@ export default function OnlineCustomersPage({ dateRange }) {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-xl font-semibold">Records</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Read all sheet tabs and normalize customer/device records from your CSV source.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            type="date"
+            value={dateRange.start}
+            onChange={(event) => setDateRange((prev) => ({ ...prev, start: event.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <input
+            type="date"
+            value={dateRange.end}
+            onChange={(event) => setDateRange((prev) => ({ ...prev, end: event.target.value }))}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <button
+            type="button"
+            onClick={() => setDateRange({ start: today, end: today })}
+            className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            onClick={() => setDateRange({ start: '', end: '' })}
+            className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+          >
+            All
+          </button>
+        </div>
 
         <form className="mt-4 space-y-3" onSubmit={saveSource}>
           <label className="block text-sm font-medium">Google Sheet URL</label>
@@ -193,17 +233,17 @@ export default function OnlineCustomersPage({ dateRange }) {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Leaderboard
-          title="Top Devices (filtered)"
+          title="Top Devices"
           rows={topDevices}
           onRowClick={(row) => setFilters((prev) => ({ ...prev, device: row.key }))}
         />
         <Leaderboard
-          title="Top Customers (filtered)"
+          title="Top Customers"
           rows={topCustomers}
           onRowClick={(row) => setFilters((prev) => ({ ...prev, customer: row.key }))}
         />
         <Leaderboard
-          title="Top Sheets (filtered)"
+          title="Top Sheets"
           rows={topSheets}
           onRowClick={(row) => setFilters((prev) => ({ ...prev, sheet: row.key }))}
         />
@@ -215,7 +255,7 @@ export default function OnlineCustomersPage({ dateRange }) {
       </div>
 
       <SimpleTable
-        title={`Records (${filteredCustomers.length}/${onlineCustomers.length})`}
+        title={`Records (${filteredCustomers.length})`}
         rows={filteredCustomers}
         emptyLabel={isLoading ? 'Loading records...' : 'No records loaded yet.'}
         extraColumns={(row) => (
@@ -281,11 +321,22 @@ function SummaryCard({ label, value }) {
 }
 
 function SimpleTable({ title, rows, emptyLabel, extraColumns, extraHeader }) {
+  const [isOpen, setIsOpen] = useState(true);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-      <h3 className="mb-3 text-lg font-semibold">{title}</h3>
-      {!rows.length && <p className="text-sm text-slate-500">{emptyLabel}</p>}
-      {!!rows.length && (
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <button
+          type="button"
+          onClick={() => setIsOpen((prev) => !prev)}
+          className="rounded-xl border border-slate-300 px-3 py-1 text-xs dark:border-slate-700"
+        >
+          {isOpen ? 'Collapse' : 'Expand'}
+        </button>
+      </div>
+      {!isOpen && <p className="text-sm text-slate-500">Records table is collapsed.</p>}
+      {isOpen && !rows.length && <p className="text-sm text-slate-500">{emptyLabel}</p>}
+      {isOpen && !!rows.length && (
         <div className="overflow-auto">
           <table className="w-full text-left text-sm">
             <thead>
