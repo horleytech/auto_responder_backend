@@ -39,6 +39,83 @@ function findPreferredColumn(headers, preferredNames = [], fallbackTokens = []) 
   return normalizedHeaders.findIndex((header) => fallbackTokens.some((token) => header.includes(token)));
 }
 
+function resolveColumnIndexes(headers = []) {
+  const timestampIndex = findPreferredColumn(
+    headers,
+    ['timestamp', 'time stamp', 'date', 'date time', 'created at', 'time'],
+    ['timestamp', 'date', 'time', 'created']
+  );
+  const buyerIndex = findPreferredColumn(
+    headers,
+    ['customer name', 'buyer name', 'name of customer', 'full name'],
+    ['customer', 'buyer', 'client', 'name']
+  );
+  const deviceIndex = findPreferredColumn(
+    headers,
+    ['item name model', 'item name / model', 'new item name', 'model name model number', 'device', 'product'],
+    ['model', 'item', 'product', 'specification', 'storage', 'device', 'phone', 'laptop']
+  );
+  const customerPhoneIndex = findPreferredColumn(
+    headers,
+    ['customer phone number', 'customer phone', 'phone number', 'whatsapp number'],
+    ['customer phone', 'phone', 'mobile', 'whatsapp', 'contact']
+  );
+
+  return { timestampIndex, buyerIndex, deviceIndex, customerPhoneIndex };
+}
+
+function resolveSheetHeaderRow(rows = []) {
+  const maxRowsToScan = Math.min(rows.length, 20);
+  let best = null;
+
+  for (let rowIndex = 0; rowIndex < maxRowsToScan; rowIndex += 1) {
+    const headers = (rows[rowIndex] || []).map((cell) => normalizeText(cell));
+    if (!headers.length) continue;
+    const indexes = resolveColumnIndexes(headers);
+    const score = [
+      indexes.buyerIndex >= 0,
+      indexes.deviceIndex >= 0,
+      indexes.timestampIndex >= 0,
+      indexes.customerPhoneIndex >= 0,
+    ].filter(Boolean).length;
+
+    if (!best || score > best.score) {
+      best = { rowIndex, headers, score, ...indexes };
+    }
+  }
+
+  if (!best) {
+    return {
+      rowIndex: 0,
+      headers: rows[0] || [],
+      ...resolveColumnIndexes(rows[0] || []),
+    };
+  }
+  return best;
+}
+
+function inferBestColumnIndex(rows = [], startRow = 1, skipIndexes = new Set(), scorer = () => 0) {
+  const maxColumns = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
+  let bestIndex = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let col = 0; col < maxColumns; col += 1) {
+    if (skipIndexes.has(col)) continue;
+    let score = 0;
+    for (let rowIndex = startRow; rowIndex < rows.length; rowIndex += 1) {
+      const value = normalizeText(rows[rowIndex]?.[col]);
+      if (!value) continue;
+      score += scorer(value);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = col;
+    }
+  }
+
+  return bestIndex;
+}
+
 function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -164,35 +241,70 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
           return;
         }
 
-        const headers = rows[0] || [];
-        const timestampIndex = findPreferredColumn(headers, ['timestamp', 'time stamp', 'date', 'date time'], ['timestamp', 'date', 'time']);
-        const buyerIndex = findPreferredColumn(headers, ['customer name'], ['customer', 'buyer', 'client', 'name']);
-        const deviceIndex = findPreferredColumn(
-          headers,
-          ['item name model', 'item name / model', 'new item name', 'model name model number'],
-          ['model', 'item', 'product', 'specification', 'storage', 'device']
-        );
-        const customerPhoneIndex = findPreferredColumn(headers, ['customer phone number', 'customer phone'], ['customer phone', 'phone']);
+        const headerInfo = resolveSheetHeaderRow(rows);
+        const headers = headerInfo.headers || [];
+        const timestampIndex = headerInfo.timestampIndex;
+        let buyerIndex = headerInfo.buyerIndex;
+        let deviceIndex = headerInfo.deviceIndex;
+        let customerPhoneIndex = headerInfo.customerPhoneIndex;
+
+        const dataStartRow = headerInfo.rowIndex + 1;
+        const excluded = new Set([timestampIndex].filter((v) => v >= 0));
+        if (buyerIndex < 0) {
+          buyerIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            if (/^\d+$/.test(value)) return -1;
+            if (value.length < 3) return 0;
+            if (/[a-z]/i.test(value)) return 2;
+            return 0;
+          });
+        }
+        if (buyerIndex >= 0) excluded.add(buyerIndex);
+
+        if (deviceIndex < 0) {
+          deviceIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            if (value.length < 3) return 0;
+            if (/\b(gb|tb|iphone|samsung|tecno|infinix|hp|elitebook|macbook|ipad|pro|max|plus)\b/i.test(value)) return 4;
+            if (/[a-z]/i.test(value) && /\d/.test(value)) return 3;
+            if (/[a-z]/i.test(value)) return 1;
+            return 0;
+          });
+        }
+        if (deviceIndex >= 0) excluded.add(deviceIndex);
+
+        if (customerPhoneIndex < 0) {
+          customerPhoneIndex = inferBestColumnIndex(rows, dataStartRow, excluded, (value) => {
+            const digits = value.replace(/\D/g, '');
+            return digits.length >= 7 ? 2 : 0;
+          });
+        }
 
         nextScannedSheets.push({
           title: sheetName,
           gid: '',
           headers,
+          headerRowNumber: Number(headerInfo.rowIndex || 0) + 1,
           matchedTimestampColumn: timestampIndex >= 0 ? headers[timestampIndex] : '',
           matchedBuyerColumn: buyerIndex >= 0 ? headers[buyerIndex] : '',
           matchedDeviceColumn: deviceIndex >= 0 ? headers[deviceIndex] : '',
           matchedCustomerPhoneColumn: customerPhoneIndex >= 0 ? headers[customerPhoneIndex] : '',
         });
 
-        if (buyerIndex < 0 || deviceIndex < 0) return;
-
-        for (let i = 1; i < rows.length; i += 1) {
+        for (let i = headerInfo.rowIndex + 1; i < rows.length; i += 1) {
           const row = rows[i] || [];
-          const customerName = normalizeText(row[buyerIndex]);
-          const device = normalizeText(row[deviceIndex]);
+          const customerName = buyerIndex >= 0 ? normalizeText(row[buyerIndex]) : '';
+          const device = deviceIndex >= 0 ? normalizeText(row[deviceIndex]) : '';
           const customerPhone = customerPhoneIndex >= 0 ? normalizeText(row[customerPhoneIndex]) : '';
           const parsedTimestamp = timestampIndex >= 0 ? parseTimestampValue(row[timestampIndex]) : { timestamp: null, dateKey: '', rawTimestamp: '' };
-          if (!customerName || !device) continue;
+          if (!customerName && !device && !customerPhone) continue;
+          const extraDetails = {};
+          headers.forEach((header, headerIndex) => {
+            if ([buyerIndex, deviceIndex, timestampIndex, customerPhoneIndex].includes(headerIndex)) return;
+            const key = normalizeText(header);
+            const value = normalizeText(row[headerIndex]);
+            if (!key || !value) return;
+            extraDetails[key] = value;
+          });
+
           buyers.push({
             id: `${sheetName}-${i}`,
             customerName,
@@ -203,6 +315,11 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
             timestamp: parsedTimestamp.timestamp,
             dateKey: parsedTimestamp.dateKey,
             rawTimestamp: parsedTimestamp.rawTimestamp,
+            extraDetails,
+            extraDetailsText: Object.entries(extraDetails)
+              .slice(0, 12)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(' | '),
           });
         }
       });
@@ -210,9 +327,9 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
       const dedupe = new Map();
       buyers.forEach((row) => {
         const dateKey = String(row.dateKey || 'unknown-date').toLowerCase();
-        const customerKey = String(row.customerName || '').toLowerCase();
-        const productKey = String(row.device || '').toLowerCase();
-        const phoneKey = String(row.customerPhone || '').toLowerCase();
+        const customerKey = String(row.customerName || `unknown-customer-${row.id}`).toLowerCase();
+        const productKey = String(row.device || `unknown-device-${row.id}`).toLowerCase();
+        const phoneKey = String(row.customerPhone || `unknown-phone-${row.id}`).toLowerCase();
         const key = `${dateKey}::${customerKey}::${productKey}::${phoneKey}`;
         if (!dedupe.has(key)) dedupe.set(key, row);
       });
