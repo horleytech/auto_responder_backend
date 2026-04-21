@@ -85,6 +85,10 @@ export default function App() {
           dateRange={sharedDateRange}
           onDateRangeChange={setSharedDateRange}
           onCustomerSelect={(senderId) => { setRequestSenderFocus(senderId); setActivePage('requests'); }}
+          onRecordsClick={() => {
+            setSharedDateRange({ start: '', end: '' });
+            setActivePage('online-customers');
+          }}
         />
       )}
       {activePage === 'requests' && (

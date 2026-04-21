@@ -130,7 +130,7 @@ export default function OnlineCustomersPage({ dateRange }) {
 
       <SimpleTable
         title={`Records (${onlineCustomers.length})`}
-        rows={onlineCustomers.slice(0, 300)}
+        rows={onlineCustomers}
         emptyLabel={isLoading ? 'Loading records...' : 'No records loaded yet.'}
         extraColumns={(row) => (
           <>
