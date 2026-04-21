@@ -9,7 +9,14 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function RequestsPage({ dateRange: externalDateRange, onDateRangeChange, senderFocus, onSenderFocusConsumed }) {
+export default function RequestsPage({
+  dateRange: externalDateRange,
+  onDateRangeChange,
+  senderFocus,
+  onSenderFocusConsumed,
+  deviceFocus,
+  onDeviceFocusConsumed,
+}) {
   const today = todayDateInputValue();
   const [requests, setRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -17,6 +24,7 @@ export default function RequestsPage({ dateRange: externalDateRange, onDateRange
   const dateRange = externalDateRange || internalDateRange;
   const setDateRange = onDateRangeChange || setInternalDateRange;
   const [expandedSenders, setExpandedSenders] = useState({});
+  const [deviceFilter, setDeviceFilter] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -41,9 +49,26 @@ export default function RequestsPage({ dateRange: externalDateRange, onDateRange
     onSenderFocusConsumed?.();
   }, [senderFocus, onSenderFocusConsumed]);
 
+  useEffect(() => {
+    if (!deviceFocus) return;
+    setDeviceFilter(deviceFocus);
+    onDeviceFocusConsumed?.();
+  }, [deviceFocus, onDeviceFocusConsumed]);
+
+  const availableDevices = useMemo(() => (
+    Array.from(new Set(requests.map((request) => getMatchedDevice(request)).filter((device) => device && device !== '-')))
+      .sort((a, b) => a.localeCompare(b))
+  ), [requests]);
+
+  const filteredRequests = useMemo(() => {
+    if (!deviceFilter) return requests;
+    const normalizedFilter = deviceFilter.trim().toLowerCase();
+    return requests.filter((request) => getMatchedDevice(request).toLowerCase().includes(normalizedFilter));
+  }, [requests, deviceFilter]);
+
   const groupedRequests = useMemo(() => {
     const map = new Map();
-    requests.forEach((request) => {
+    filteredRequests.forEach((request) => {
       const sender = request.senderId || 'Unknown';
       const current = map.get(sender) || { sender, requests: [], matchedDevices: new Set(), statuses: {} };
       current.requests.push(request);
@@ -54,7 +79,7 @@ export default function RequestsPage({ dateRange: externalDateRange, onDateRange
       map.set(sender, current);
     });
     return Array.from(map.values()).sort((a, b) => b.requests.length - a.requests.length);
-  }, [requests]);
+  }, [filteredRequests]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
@@ -76,8 +101,31 @@ export default function RequestsPage({ dateRange: externalDateRange, onDateRange
             onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))}
             className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
+          <input
+            list="request-device-options"
+            value={deviceFilter}
+            onChange={(e) => setDeviceFilter(e.target.value)}
+            placeholder="Filter by matched device"
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <datalist id="request-device-options">
+            {availableDevices.map((device) => <option key={device} value={device} />)}
+          </datalist>
+          {!!deviceFilter && (
+            <button
+              type="button"
+              onClick={() => setDeviceFilter('')}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+            >
+              Clear Device Filter
+            </button>
+          )}
         </div>
       </div>
+
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Showing <strong>{filteredRequests.length}</strong> of <strong>{requests.length}</strong> request(s).
+      </p>
 
       <div className="space-y-3">
         {groupedRequests.map((group) => {

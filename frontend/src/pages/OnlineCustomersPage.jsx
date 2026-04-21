@@ -17,6 +17,7 @@ export default function OnlineCustomersPage({ dateRange }) {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [sheetNamesInput, setSheetNamesInput] = useState('');
+  const [filters, setFilters] = useState({ sheet: '', customer: '', device: '' });
 
   async function loadSource() {
     const { response, data } = await fetchJsonSafe('/api/online-customers-source');
@@ -48,9 +49,32 @@ export default function OnlineCustomersPage({ dateRange }) {
     loadCustomers();
   }, [dateRange?.start, dateRange?.end]);
 
-  const recordsWithTimestamp = useMemo(
-    () => onlineCustomers.filter((row) => Number.isFinite(Number(row.timestamp))).length,
-    [onlineCustomers]
+  const availableSheets = useMemo(
+    () => Array.from(new Set(onlineCustomers.map((row) => row.sheet).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [onlineCustomers],
+  );
+
+  const filteredCustomers = useMemo(() => {
+    const normalizedSheet = filters.sheet.trim().toLowerCase();
+    const normalizedCustomer = filters.customer.trim().toLowerCase();
+    const normalizedDevice = filters.device.trim().toLowerCase();
+    return onlineCustomers.filter((row) => {
+      const rowSheet = String(row.sheet || '').toLowerCase();
+      const rowCustomer = String(row.customerName || '').toLowerCase();
+      const rowDevice = String(row.device || '').toLowerCase();
+      if (normalizedSheet && rowSheet !== normalizedSheet) return false;
+      if (normalizedCustomer && !rowCustomer.includes(normalizedCustomer)) return false;
+      if (normalizedDevice && !rowDevice.includes(normalizedDevice)) return false;
+      return true;
+    });
+  }, [onlineCustomers, filters.sheet, filters.customer, filters.device]);
+
+  const topDevices = useMemo(() => rankRows(filteredCustomers, (row) => row.device || 'Unknown'), [filteredCustomers]);
+  const topCustomers = useMemo(() => rankRows(filteredCustomers, (row) => row.customerName || 'Unknown'), [filteredCustomers]);
+  const topSheets = useMemo(() => rankRows(filteredCustomers, (row) => row.sheet || 'Unknown'), [filteredCustomers]);
+  const filteredRecordsWithTimestamp = useMemo(
+    () => filteredCustomers.filter((row) => Number.isFinite(Number(row.timestamp))).length,
+    [filteredCustomers],
   );
 
   async function saveSource(event) {
@@ -118,9 +142,71 @@ export default function OnlineCustomersPage({ dateRange }) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Total Records" value={onlineCustomers.length} />
-        <SummaryCard label="Records With Timestamp" value={recordsWithTimestamp} />
-        <SummaryCard label="Records Missing Timestamp" value={Math.max(onlineCustomers.length - recordsWithTimestamp, 0)} />
+        <SummaryCard label="Total Records" value={filteredCustomers.length} />
+        <SummaryCard label="Records With Timestamp" value={filteredRecordsWithTimestamp} />
+        <SummaryCard label="Records Missing Timestamp" value={Math.max(filteredCustomers.length - filteredRecordsWithTimestamp, 0)} />
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <h3 className="mb-3 text-lg font-semibold">Record Filters</h3>
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-500">Sheet</span>
+            <select
+              value={filters.sheet}
+              onChange={(event) => setFilters((prev) => ({ ...prev, sheet: event.target.value }))}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            >
+              <option value="">All sheets</option>
+              {availableSheets.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-500">Customer</span>
+            <input
+              value={filters.customer}
+              onChange={(event) => setFilters((prev) => ({ ...prev, customer: event.target.value }))}
+              placeholder="Search customer"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-slate-500">Device</span>
+            <input
+              value={filters.device}
+              onChange={(event) => setFilters((prev) => ({ ...prev, device: event.target.value }))}
+              placeholder="Search device"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => setFilters({ sheet: '', customer: '', device: '' })}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Leaderboard
+          title="Top Devices (filtered)"
+          rows={topDevices}
+          onRowClick={(row) => setFilters((prev) => ({ ...prev, device: row.key }))}
+        />
+        <Leaderboard
+          title="Top Customers (filtered)"
+          rows={topCustomers}
+          onRowClick={(row) => setFilters((prev) => ({ ...prev, customer: row.key }))}
+        />
+        <Leaderboard
+          title="Top Sheets (filtered)"
+          rows={topSheets}
+          onRowClick={(row) => setFilters((prev) => ({ ...prev, sheet: row.key }))}
+        />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
@@ -129,8 +215,8 @@ export default function OnlineCustomersPage({ dateRange }) {
       </div>
 
       <SimpleTable
-        title={`Records (${onlineCustomers.length})`}
-        rows={onlineCustomers}
+        title={`Records (${filteredCustomers.length}/${onlineCustomers.length})`}
+        rows={filteredCustomers}
         emptyLabel={isLoading ? 'Loading records...' : 'No records loaded yet.'}
         extraColumns={(row) => (
           <>
@@ -173,6 +259,18 @@ export default function OnlineCustomersPage({ dateRange }) {
   );
 }
 
+function rankRows(rows, getter, limit = 10) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = String(getter(row) || 'Unknown').trim() || 'Unknown';
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([key, count]) => ({ key, count }));
+}
+
 function SummaryCard({ label, value }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
@@ -209,6 +307,28 @@ function SimpleTable({ title, rows, emptyLabel, extraColumns, extraHeader }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function Leaderboard({ title, rows, onRowClick }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <h3 className="mb-3 text-lg font-semibold">{title}</h3>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <button
+            key={row.key}
+            type="button"
+            onClick={() => onRowClick?.(row)}
+            className="flex w-full items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-left text-sm transition hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
+          >
+            <span className="truncate pr-2">{row.key}</span>
+            <span className="font-semibold">{row.count}</span>
+          </button>
+        ))}
+        {!rows.length && <p className="text-sm text-slate-500">No data yet.</p>}
+      </div>
     </div>
   );
 }

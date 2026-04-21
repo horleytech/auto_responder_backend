@@ -9,7 +9,7 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect, onRecordsClick }) {
+export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect, onRecordsClick, onDeviceSelect }) {
   const today = todayDateInputValue();
   const [internalDateRange, setInternalDateRange] = useState({ start: today, end: today });
   const dateRange = externalDateRange || internalDateRange;
@@ -118,7 +118,11 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
 
       <div className="grid gap-4 lg:grid-cols-2">
         <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
-        <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
+        <Leaderboard
+          title="Top 10 Most Requested Devices"
+          rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))}
+          onRowClick={(row) => onDeviceSelect?.(row.key)}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-1">
