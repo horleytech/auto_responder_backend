@@ -9,7 +9,7 @@ function todayDateInputValue() {
   return `${year}-${month}-${day}`;
 }
 
-export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect }) {
+export default function AnalyticsPage({ dateRange: externalDateRange, onDateRangeChange, onCustomerSelect, onRecordsClick, onDeviceSelect }) {
   const today = todayDateInputValue();
   const [internalDateRange, setInternalDateRange] = useState({ start: today, end: today });
   const dateRange = externalDateRange || internalDateRange;
@@ -95,7 +95,11 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
       {status && <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{status}</p>}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <SummaryCard label="Records (CSV rows)" value={recordsSummary.rowCount || 0} />
+        <SummaryCard
+          label="Records (CSV rows)"
+          value={recordsSummary.rowCount || 0}
+          onClick={() => onRecordsClick?.()}
+        />
         <SummaryCard label="Total Requests" value={requestSummary.total} />
         <SummaryCard label="Matched Requests" value={requestSummary.matchedTotal} />
         <SummaryCard label="Matched Devices" value={Object.keys(requestSummary.byDevice || {}).length} />
@@ -114,7 +118,11 @@ export default function AnalyticsPage({ dateRange: externalDateRange, onDateRang
 
       <div className="grid gap-4 lg:grid-cols-2">
         <PieChartCard title="Top Matched Devices Distribution" data={requestSummary.byDevice} />
-        <Leaderboard title="Top 10 Most Requested Devices" rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))} />
+        <Leaderboard
+          title="Top 10 Most Requested Devices"
+          rows={data.devices.map((d) => ({ key: d.deviceName || 'Unknown', count: d.requestCount || 0 }))}
+          onRowClick={(row) => onDeviceSelect?.(row.key)}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-1">
@@ -142,9 +150,22 @@ function normalizeSummary(summary) {
   };
 }
 
-function SummaryCard({ label, value }) {
+function SummaryCard({ label, value, onClick }) {
+  const isClickable = typeof onClick === 'function';
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+    <div
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (!isClickable) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      className={`rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 ${isClickable ? 'cursor-pointer transition hover:border-indigo-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-500' : ''}`}
+    >
       <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
       <p className="mt-2 break-words text-3xl font-bold">{typeof value === 'number' ? Number(value || 0) : value}</p>
     </div>

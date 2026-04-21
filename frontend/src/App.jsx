@@ -34,6 +34,7 @@ export default function App() {
   const [providerState, setProviderState] = useState({ activeProvider: 'chatgpt', providers: [] });
   const [catalogState, setCatalogState] = useState({ inventoryCsvUrl: '', arrangementCsvUrl: '' });
   const [requestSenderFocus, setRequestSenderFocus] = useState('');
+  const [requestDeviceFocus, setRequestDeviceFocus] = useState('');
   const [sharedDateRange, setSharedDateRange] = useState(() => {
     const end = todayDateInputValue();
     const start = offsetDateInputValue(30);
@@ -85,6 +86,11 @@ export default function App() {
           dateRange={sharedDateRange}
           onDateRangeChange={setSharedDateRange}
           onCustomerSelect={(senderId) => { setRequestSenderFocus(senderId); setActivePage('requests'); }}
+          onDeviceSelect={(deviceName) => { setRequestDeviceFocus(deviceName); setActivePage('requests'); }}
+          onRecordsClick={() => {
+            setSharedDateRange({ start: '', end: '' });
+            setActivePage('online-customers');
+          }}
         />
       )}
       {activePage === 'requests' && (
@@ -92,7 +98,9 @@ export default function App() {
           dateRange={sharedDateRange}
           onDateRangeChange={setSharedDateRange}
           senderFocus={requestSenderFocus}
+          deviceFocus={requestDeviceFocus}
           onSenderFocusConsumed={() => setRequestSenderFocus('')}
+          onDeviceFocusConsumed={() => setRequestDeviceFocus('')}
         />
       )}
       {activePage === 'online-customers' && (
