@@ -808,6 +808,9 @@ app.post('/api/respond', async (req, res) => {
     
     let activeDynamicResponses = sanitizeStringArray(settings.dynamicResponses);
     if (!activeDynamicResponses.length) activeDynamicResponses = ["Available", "Available chief", "Available boss"];
+    const enablePriceReply = Boolean(settings.enablePriceReply);
+    const enableLinkReply = Boolean(settings.enableLinkReply);
+    const generalProductLinkOverride = String(settings.generalProductLinkOverride || '').trim();
 
     const prompt = `You are a JSON-based entity extractor. Return JSON ONLY.
 Category: If message contains 'used', category is 'used'. Else 'new'.
@@ -839,7 +842,8 @@ RULES:
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
-    const resolvedDevice = foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
+    const resolvedProduct = foundDevice ? catalog.resolveProductForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
+    const resolvedDevice = resolvedProduct ? resolvedProduct.deviceName : (foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null);
 
     let finalResponse = null;
 
@@ -851,6 +855,14 @@ RULES:
     } else if (foundDevice) {
       if (resolvedDevice && activeSupportedList.includes(resolvedDevice)) {
         finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
+        if (enablePriceReply && resolvedProduct) {
+          const preferredPrice = String(resolvedProduct.salePrice || resolvedProduct.regularPrice || '').trim();
+          if (preferredPrice) finalResponse = `${finalResponse} - ${preferredPrice}`;
+        }
+        if (enableLinkReply) {
+          const preferredLink = generalProductLinkOverride || String(resolvedProduct?.link || '').trim();
+          if (preferredLink) finalResponse = `${finalResponse}\n${preferredLink}`;
+        }
         responseIndex++;
         requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
         console.log(`✅ Match found: ${resolvedDevice}. Sending reply: ${finalResponse}`);
@@ -872,6 +884,7 @@ RULES:
             aiCategory: category,
             aiDeviceMatch: resolvedDevice || foundDevice,
             matchedDevice: resolvedDevice || foundDevice,
+            matchedProductId: resolvedProduct?.productId || null,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

@@ -39,6 +39,61 @@ function findPreferredColumn(headers, preferredNames = [], fallbackTokens = []) 
   return normalizedHeaders.findIndex((header) => fallbackTokens.some((token) => header.includes(token)));
 }
 
+function resolveColumnIndexes(headers = []) {
+  const timestampIndex = findPreferredColumn(
+    headers,
+    ['timestamp', 'time stamp', 'date', 'date time', 'created at', 'time'],
+    ['timestamp', 'date', 'time', 'created']
+  );
+  const buyerIndex = findPreferredColumn(
+    headers,
+    ['customer name', 'buyer name', 'name of customer', 'full name'],
+    ['customer', 'buyer', 'client', 'name']
+  );
+  const deviceIndex = findPreferredColumn(
+    headers,
+    ['item name model', 'item name / model', 'new item name', 'model name model number', 'device', 'product'],
+    ['model', 'item', 'product', 'specification', 'storage', 'device', 'phone', 'laptop']
+  );
+  const customerPhoneIndex = findPreferredColumn(
+    headers,
+    ['customer phone number', 'customer phone', 'phone number', 'whatsapp number'],
+    ['customer phone', 'phone', 'mobile', 'whatsapp', 'contact']
+  );
+
+  return { timestampIndex, buyerIndex, deviceIndex, customerPhoneIndex };
+}
+
+function resolveSheetHeaderRow(rows = []) {
+  const maxRowsToScan = Math.min(rows.length, 20);
+  let best = null;
+
+  for (let rowIndex = 0; rowIndex < maxRowsToScan; rowIndex += 1) {
+    const headers = (rows[rowIndex] || []).map((cell) => normalizeText(cell));
+    if (!headers.length) continue;
+    const indexes = resolveColumnIndexes(headers);
+    const score = [
+      indexes.buyerIndex >= 0,
+      indexes.deviceIndex >= 0,
+      indexes.timestampIndex >= 0,
+      indexes.customerPhoneIndex >= 0,
+    ].filter(Boolean).length;
+
+    if (!best || score > best.score) {
+      best = { rowIndex, headers, score, ...indexes };
+    }
+  }
+
+  if (!best) {
+    return {
+      rowIndex: 0,
+      headers: rows[0] || [],
+      ...resolveColumnIndexes(rows[0] || []),
+    };
+  }
+  return best;
+}
+
 function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -164,20 +219,18 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
           return;
         }
 
-        const headers = rows[0] || [];
-        const timestampIndex = findPreferredColumn(headers, ['timestamp', 'time stamp', 'date', 'date time'], ['timestamp', 'date', 'time']);
-        const buyerIndex = findPreferredColumn(headers, ['customer name'], ['customer', 'buyer', 'client', 'name']);
-        const deviceIndex = findPreferredColumn(
-          headers,
-          ['item name model', 'item name / model', 'new item name', 'model name model number'],
-          ['model', 'item', 'product', 'specification', 'storage', 'device']
-        );
-        const customerPhoneIndex = findPreferredColumn(headers, ['customer phone number', 'customer phone'], ['customer phone', 'phone']);
+        const headerInfo = resolveSheetHeaderRow(rows);
+        const headers = headerInfo.headers || [];
+        const timestampIndex = headerInfo.timestampIndex;
+        const buyerIndex = headerInfo.buyerIndex;
+        const deviceIndex = headerInfo.deviceIndex;
+        const customerPhoneIndex = headerInfo.customerPhoneIndex;
 
         nextScannedSheets.push({
           title: sheetName,
           gid: '',
           headers,
+          headerRowNumber: Number(headerInfo.rowIndex || 0) + 1,
           matchedTimestampColumn: timestampIndex >= 0 ? headers[timestampIndex] : '',
           matchedBuyerColumn: buyerIndex >= 0 ? headers[buyerIndex] : '',
           matchedDeviceColumn: deviceIndex >= 0 ? headers[deviceIndex] : '',
@@ -186,13 +239,22 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
 
         if (buyerIndex < 0 || deviceIndex < 0) return;
 
-        for (let i = 1; i < rows.length; i += 1) {
+        for (let i = headerInfo.rowIndex + 1; i < rows.length; i += 1) {
           const row = rows[i] || [];
           const customerName = normalizeText(row[buyerIndex]);
           const device = normalizeText(row[deviceIndex]);
           const customerPhone = customerPhoneIndex >= 0 ? normalizeText(row[customerPhoneIndex]) : '';
           const parsedTimestamp = timestampIndex >= 0 ? parseTimestampValue(row[timestampIndex]) : { timestamp: null, dateKey: '', rawTimestamp: '' };
           if (!customerName || !device) continue;
+          const extraDetails = {};
+          headers.forEach((header, headerIndex) => {
+            if ([buyerIndex, deviceIndex, timestampIndex, customerPhoneIndex].includes(headerIndex)) return;
+            const key = normalizeText(header);
+            const value = normalizeText(row[headerIndex]);
+            if (!key || !value) return;
+            extraDetails[key] = value;
+          });
+
           buyers.push({
             id: `${sheetName}-${i}`,
             customerName,
@@ -203,6 +265,11 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
             timestamp: parsedTimestamp.timestamp,
             dateKey: parsedTimestamp.dateKey,
             rawTimestamp: parsedTimestamp.rawTimestamp,
+            extraDetails,
+            extraDetailsText: Object.entries(extraDetails)
+              .slice(0, 12)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(' | '),
           });
         }
       });
