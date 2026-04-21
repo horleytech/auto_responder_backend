@@ -193,6 +193,15 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
           const customerPhone = customerPhoneIndex >= 0 ? normalizeText(row[customerPhoneIndex]) : '';
           const parsedTimestamp = timestampIndex >= 0 ? parseTimestampValue(row[timestampIndex]) : { timestamp: null, dateKey: '', rawTimestamp: '' };
           if (!customerName || !device) continue;
+          const extraDetails = {};
+          headers.forEach((header, headerIndex) => {
+            if ([buyerIndex, deviceIndex, timestampIndex, customerPhoneIndex].includes(headerIndex)) return;
+            const key = normalizeText(header);
+            const value = normalizeText(row[headerIndex]);
+            if (!key || !value) return;
+            extraDetails[key] = value;
+          });
+
           buyers.push({
             id: `${sheetName}-${i}`,
             customerName,
@@ -203,6 +212,11 @@ function createOnlineCustomersService(initialSpreadsheetUrl = '') {
             timestamp: parsedTimestamp.timestamp,
             dateKey: parsedTimestamp.dateKey,
             rawTimestamp: parsedTimestamp.rawTimestamp,
+            extraDetails,
+            extraDetailsText: Object.entries(extraDetails)
+              .slice(0, 5)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(' | '),
           });
         }
       });

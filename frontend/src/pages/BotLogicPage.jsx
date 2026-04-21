@@ -81,7 +81,6 @@ export default function BotLogicPage() {
           <div className="flex gap-3">
             <button onClick={saveBotLogic} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save Bot Logic</button>
           </div>
-
           <p className="text-sm text-slate-500">{status}</p>
         </div>
       </div>

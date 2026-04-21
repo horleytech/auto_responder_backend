@@ -137,6 +137,7 @@ export default function OnlineCustomersPage({ dateRange }) {
             <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.timestamp ? new Date(row.timestamp).toLocaleString() : row.rawTimestamp || '-'}</td>
             <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.customerPhone || '-'}</td>
             <td className="whitespace-nowrap px-2 py-2 text-xs text-slate-500">{row.sheet || '-'}</td>
+            <td className="px-2 py-2 text-xs text-slate-500">{row.extraDetailsText || '-'}</td>
           </>
         )}
         extraHeader={(
@@ -144,6 +145,7 @@ export default function OnlineCustomersPage({ dateRange }) {
             <th className="px-2 py-2">Timestamp</th>
             <th className="px-2 py-2">Phone</th>
             <th className="px-2 py-2">Sheet</th>
+            <th className="px-2 py-2">Extra Details</th>
           </>
         )}
       />
