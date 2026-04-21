@@ -29,6 +29,7 @@ export default function OnlineCustomersPage({ dateRange: externalDateRange, onDa
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [sheetNamesInput, setSheetNamesInput] = useState('');
+  const [excludedSheetNamesInput, setExcludedSheetNamesInput] = useState('');
   const [filters, setFilters] = useState({ sheet: '', customer: '', device: '' });
 
   async function loadSource() {
@@ -36,6 +37,7 @@ export default function OnlineCustomersPage({ dateRange: externalDateRange, onDa
     if (!response.ok) return;
     setSource((prev) => ({ ...prev, ...data }));
     setSheetNamesInput(Array.isArray(data.onlineCustomersSheetNames) ? data.onlineCustomersSheetNames.join(', ') : '');
+    setExcludedSheetNamesInput(Array.isArray(data.onlineCustomersExcludedSheetNames) ? data.onlineCustomersExcludedSheetNames.join(', ') : '');
   }
 
   async function loadCustomers() {
@@ -98,6 +100,7 @@ export default function OnlineCustomersPage({ dateRange: externalDateRange, onDa
       body: JSON.stringify({
         onlineCustomersSpreadsheetUrl: source.onlineCustomersSpreadsheetUrl,
         onlineCustomersSheetNames: sheetNamesInput.split(',').map((item) => item.trim()).filter(Boolean),
+        onlineCustomersExcludedSheetNames: excludedSheetNamesInput.split(',').map((item) => item.trim()).filter(Boolean),
       }),
     });
     if (response.ok) {
@@ -173,6 +176,13 @@ export default function OnlineCustomersPage({ dateRange: externalDateRange, onDa
             value={sheetNamesInput}
             onChange={(event) => setSheetNamesInput(event.target.value)}
             placeholder="Records (Responses), iPhones, Laptop"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <label className="block text-sm font-medium pt-1">Sheet tabs to exclude (optional, comma-separated)</label>
+          <input
+            value={excludedSheetNamesInput}
+            onChange={(event) => setExcludedSheetNamesInput(event.target.value)}
+            placeholder="Archive, Testing, Duplicate"
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
         </form>

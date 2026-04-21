@@ -202,6 +202,7 @@ async function persistOnlineCustomersSnapshot() {
   await firestore.collection('ar_settings').doc('onlineCustomers').set({
     onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
     onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
+    onlineCustomersExcludedSheetNames: onlineCustomersService.getExcludedSheetNames(),
     rowCount: rows.length,
     sheetCount: onlineCustomersService.getScannedSheets().length,
     lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
@@ -377,6 +378,7 @@ app.get('/api/online-customers-source', (req, res) => {
   res.json({
     onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
     onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
+    onlineCustomersExcludedSheetNames: onlineCustomersService.getExcludedSheetNames(),
     rowCount: onlineCustomersService.getCustomers().length,
     sheetsScanned: onlineCustomersService.getScannedSheets(),
     lastSyncedAt: onlineCustomersService.getLastSyncedAt(),
@@ -388,11 +390,14 @@ app.post('/api/online-customers-source', async (req, res) => {
   if (!isDashboardAuthorized(req)) return res.sendStatus(403);
   const nextUrl = String(req.body?.onlineCustomersSpreadsheetUrl || '').trim();
   const nextSheetNames = Array.isArray(req.body?.onlineCustomersSheetNames) ? req.body.onlineCustomersSheetNames : [];
+  const nextExcludedSheetNames = Array.isArray(req.body?.onlineCustomersExcludedSheetNames) ? req.body.onlineCustomersExcludedSheetNames : [];
   onlineCustomersService.setSpreadsheetUrl(nextUrl);
   onlineCustomersService.setIncludedSheetNames(nextSheetNames);
+  onlineCustomersService.setExcludedSheetNames(nextExcludedSheetNames);
   await settingsStore.updateSettings({
     onlineCustomersSpreadsheetUrl: onlineCustomersService.getSpreadsheetUrl(),
     onlineCustomersSheetNames: onlineCustomersService.getIncludedSheetNames(),
+    onlineCustomersExcludedSheetNames: onlineCustomersService.getExcludedSheetNames(),
   });
   const loaded = await onlineCustomersService.loadCustomers();
   if (!loaded.success) return res.status(400).json(loaded);
@@ -587,7 +592,7 @@ app.get('/api/requests', async (req, res) => {
       if (!Number.isFinite(time)) return true;
       return time >= start && time <= end;
     });
-    res.json({ requests: requests.slice(0, 300), summary: summarizeRequests(requests) });
+    res.json({ requests, summary: summarizeRequests(requests) });
   } catch(e) { res.json({ requests: [], summary: { total: 0, byStatus: {}, byHour: {}, byDevice: {} } }); }
 });
 
@@ -928,6 +933,7 @@ app.get('*', (req, res) => {
     catalog.setArrangementCsvUrl(settings.arrangementCsvUrl || ARRANGEMENT_MAP_CSV_URL);
     onlineCustomersService.setSpreadsheetUrl(settings.onlineCustomersSpreadsheetUrl || '');
     onlineCustomersService.setIncludedSheetNames(settings.onlineCustomersSheetNames || []);
+    onlineCustomersService.setExcludedSheetNames(settings.onlineCustomersExcludedSheetNames || []);
     const loaded = await catalog.loadCatalog();
     if (loaded.success) {
       await persistCatalogHistory();

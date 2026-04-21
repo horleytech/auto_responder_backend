@@ -62,8 +62,7 @@ export default function RequestsPage({
 
   const filteredRequests = useMemo(() => {
     if (!deviceFilter) return requests;
-    const normalizedFilter = deviceFilter.trim().toLowerCase();
-    return requests.filter((request) => getMatchedDevice(request).toLowerCase().includes(normalizedFilter));
+    return requests.filter((request) => requestMatchesDeviceFilter(request, deviceFilter));
   }, [requests, deviceFilter]);
 
   const groupedRequests = useMemo(() => {
@@ -222,4 +221,20 @@ function getStatus(request) {
 
 function getMatchedDevice(request) {
   return request.matchedDevice || request.aiDeviceMatch || '-';
+}
+
+function normalizeDeviceToken(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function requestMatchesDeviceFilter(request, filterText) {
+  const normalizedFilter = normalizeDeviceToken(filterText);
+  if (!normalizedFilter) return true;
+  const candidates = [
+    request.matchedDevice,
+    request.aiDeviceMatch,
+    request.device,
+    request.senderMessage,
+  ];
+  return candidates.some((candidate) => normalizeDeviceToken(candidate).includes(normalizedFilter));
 }
