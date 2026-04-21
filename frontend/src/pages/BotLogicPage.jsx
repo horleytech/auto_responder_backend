@@ -16,6 +16,7 @@ export default function BotLogicPage() {
   const [forbiddenNewText, setForbiddenNewText] = useState('');
   const [forbiddenUsedText, setForbiddenUsedText] = useState('');
   const [responsesText, setResponsesText] = useState('');
+  const [enablePriceReply, setEnablePriceReply] = useState(false);
   const [status, setStatus] = useState('');
 
   async function loadBotLogic() {
@@ -28,6 +29,7 @@ export default function BotLogicPage() {
     setForbiddenNewText(toLines(data.forbiddenNewPhrases));
     setForbiddenUsedText(toLines(data.forbiddenUsedPhrases));
     setResponsesText(toLines(data.dynamicResponses));
+    setEnablePriceReply(Boolean(data.enablePriceReply));
     setStatus('Bot logic loaded.');
   }
 
@@ -37,6 +39,7 @@ export default function BotLogicPage() {
       forbiddenNewPhrases: fromLines(forbiddenNewText),
       forbiddenUsedPhrases: fromLines(forbiddenUsedText),
       dynamicResponses: fromLines(responsesText),
+      enablePriceReply,
     };
 
     const { response, data } = await fetchJsonSafe('/api/bot-logic', {
@@ -81,6 +84,14 @@ export default function BotLogicPage() {
           <div className="flex gap-3">
             <button onClick={saveBotLogic} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Save Bot Logic</button>
           </div>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={enablePriceReply}
+              onChange={(e) => setEnablePriceReply(e.target.checked)}
+            />
+            Include matched catalog price in bot replies
+          </label>
 
           <p className="text-sm text-slate-500">{status}</p>
         </div>

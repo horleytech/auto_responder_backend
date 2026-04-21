@@ -503,6 +503,7 @@ app.get('/api/bot-logic', async (req, res) => {
     forbiddenNewPhrases: sanitizeStringArray(settings.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(settings.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(settings.dynamicResponses),
+    enablePriceReply: Boolean(settings.enablePriceReply),
   });
 });
 
@@ -512,6 +513,7 @@ app.post('/api/bot-logic', async (req, res) => {
     forbiddenNewPhrases: sanitizeStringArray(req.body?.forbiddenNewPhrases),
     forbiddenUsedPhrases: sanitizeStringArray(req.body?.forbiddenUsedPhrases),
     dynamicResponses: sanitizeStringArray(req.body?.dynamicResponses),
+    enablePriceReply: Boolean(req.body?.enablePriceReply),
   };
   await settingsStore.updateSettings(next);
   if (firestore) {
@@ -808,6 +810,7 @@ app.post('/api/respond', async (req, res) => {
     
     let activeDynamicResponses = sanitizeStringArray(settings.dynamicResponses);
     if (!activeDynamicResponses.length) activeDynamicResponses = ["Available", "Available chief", "Available boss"];
+    const enablePriceReply = Boolean(settings.enablePriceReply);
 
     const prompt = `You are a JSON-based entity extractor. Return JSON ONLY.
 Category: If message contains 'used', category is 'used'. Else 'new'.
@@ -839,7 +842,8 @@ RULES:
 
     const activeSupportedList = (category === 'used') ? activeUsedDevices : activeNewDevices;
     const activeForbiddenList = (category === 'used') ? activeForbiddenUsed : activeForbiddenNew;
-    const resolvedDevice = foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
+    const resolvedProduct = foundDevice ? catalog.resolveProductForMessage({ mappedDevice: foundDevice, userMessage, category }) : null;
+    const resolvedDevice = resolvedProduct ? resolvedProduct.deviceName : (foundDevice ? catalog.resolveDeviceForMessage({ mappedDevice: foundDevice, userMessage, category }) : null);
 
     let finalResponse = null;
 
@@ -851,6 +855,10 @@ RULES:
     } else if (foundDevice) {
       if (resolvedDevice && activeSupportedList.includes(resolvedDevice)) {
         finalResponse = activeDynamicResponses[responseIndex % activeDynamicResponses.length];
+        if (enablePriceReply && resolvedProduct) {
+          const preferredPrice = String(resolvedProduct.salePrice || resolvedProduct.regularPrice || '').trim();
+          if (preferredPrice) finalResponse = `${finalResponse} - ${preferredPrice}`;
+        }
         responseIndex++;
         requestStatus = finalResponse ? REQUEST_STATUSES.REPLIED : REQUEST_STATUSES.MATCHED_NO_REPLY;
         console.log(`✅ Match found: ${resolvedDevice}. Sending reply: ${finalResponse}`);
@@ -872,6 +880,7 @@ RULES:
             aiCategory: category,
             aiDeviceMatch: resolvedDevice || foundDevice,
             matchedDevice: resolvedDevice || foundDevice,
+            matchedProductId: resolvedProduct?.productId || null,
             status: requestStatus,
             replied: !!finalResponse,
             timestamp: Date.now(),

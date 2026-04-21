@@ -10,6 +10,7 @@ function createSettingsStore(db) {
     forbiddenNewPhrases: [],
     forbiddenUsedPhrases: [],
     dynamicResponses: [],
+    enablePriceReply: false,
   };
 
   const docRef = db ? db.collection('ar_settings').doc('config') : null;
